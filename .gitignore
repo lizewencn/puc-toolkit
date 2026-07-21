@@ -1,0 +1,11 @@
+**/manager_config.json
+**/module_config.json
+**/login_config.json
+**/reports/
+**/*.har
+**/*captcha*
+**/*token*
+.env
+.env.*
+*.zip
+*.log

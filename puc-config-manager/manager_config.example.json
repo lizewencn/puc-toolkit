@@ -1,0 +1,10 @@
+{
+  "serverIp": "<SERVER_IPV4>",
+  "port": 16890,
+  "scheme": "https",
+  "realm": "<REALM>",
+  "adminUser": "<ADMIN_ACCOUNT>",
+  "adminPassword": "<REQUIRED_32_HEX_CIPHERTEXT>",
+  "allowInsecureTls": false,
+  "runMode": "plan"
+}

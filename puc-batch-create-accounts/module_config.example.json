@@ -1,0 +1,13 @@
+{
+  "startSequence": 0,
+  "count": 1,
+  "accountPrefix": "user",
+  "aliasPrefix": "alias",
+  "defaultAccountPassword": "<REQUIRED_32_HEX_CIPHERTEXT>",
+  "highestRoleName": "<HIGHEST_ROLE_NAME>",
+  "loginTerminalName": "Dispatch APP",
+  "rootOrganizationName": "<ROOT_ORGANIZATION_NAME>",
+  "requestDelayMs": 250,
+  "maxReadRetries": 2,
+  "maxScanCount": 100
+}

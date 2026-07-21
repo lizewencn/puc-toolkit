@@ -1,0 +1,10 @@
+{
+  "startSequence": 0,
+  "count": 1,
+  "aliasPrefix": "person",
+  "rootOrganizationName": "<ROOT_ORGANIZATION_NAME>",
+  "policeTypeGuid": "<PERSONNEL_TYPE_GUID>",
+  "requestDelayMs": 250,
+  "maxReadRetries": 2,
+  "maxScanCount": 100
+}

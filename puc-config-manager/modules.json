@@ -1,0 +1,22 @@
+{
+  "modules": [
+    {
+      "name": "accounts",
+      "enabled": true,
+      "description": "Batch-create configuration accounts",
+      "script": "../puc-batch-create-accounts/scripts/PucBatchAccounts.ps1",
+      "adapter": "../puc-batch-create-accounts/references/adapter.json",
+      "config": "../puc-batch-create-accounts/module_config.json",
+      "reportDirectory": "reports/accounts"
+    },
+    {
+      "name": "personnel",
+      "enabled": false,
+      "description": "Batch-create address-book personnel",
+      "script": "../puc-batch-create-personnel/scripts/PucBatchPersonnel.ps1",
+      "adapter": "../puc-batch-create-personnel/references/adapter.json",
+      "config": "../puc-batch-create-personnel/module_config.json",
+      "reportDirectory": "reports/personnel"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "PUC Batch Personnel"
+  short_description: "Batch-create PUC personnel safely"
+  default_prompt: "Use $puc-batch-create-personnel to preview or batch-create PUC personnel with duplicate checks."

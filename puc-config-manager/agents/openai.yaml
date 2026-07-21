@@ -1,0 +1,4 @@
+interface:
+  display_name: "PUC Configuration Manager"
+  short_description: "Manage PUC functions with one login"
+  default_prompt: "Use $puc-config-manager to run PUC configuration functions through one authenticated session."

@@ -41,6 +41,13 @@ function Connect-PucSession {
             [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
             $callbackChanged = $true
         }
+        $commonOperation = $Adapter.operations.commonConfig
+        if ($null -eq $commonOperation) { throw 'Adapter does not define the commonConfig operation required to discover the PUC ID.' }
+        $commonUri = $baseUrl.TrimEnd('/') + [string]$commonOperation.path
+        $commonResponse = Invoke-PucJsonRequest -Uri $commonUri -Body $commonOperation.bodyTemplate -AllowInsecureTls ($LoginConfig.allowInsecureTls -eq $true)
+        $pucId = [string](Get-PucPropertyPath $commonResponse ([string]$Adapter.pucId.responsePath))
+        if ([string]::IsNullOrWhiteSpace($pucId)) { throw 'Common configuration response did not return a PUC ID.' }
+
         if ([string]::IsNullOrWhiteSpace($CaptchaValue)) {
             $captcha = Invoke-PucJsonRequest -Uri $uri -Body $Adapter.operations.captcha.bodyTemplate -AllowInsecureTls ($LoginConfig.allowInsecureTls -eq $true)
             $captchaId = Get-PucPropertyPath $captcha ([string]$Adapter.captcha.idResponsePath)
@@ -62,6 +69,7 @@ function Connect-PucSession {
             puc_passwd = [string]$LoginConfig.adminPassword
             captcha_id = $captchaId
             captcha_value = $CaptchaValue
+            puc_id = $pucId
             cmd_name = 'login_puc_account'
         }
         $response = Invoke-PucJsonRequest -Uri $uri -Body $body -AllowInsecureTls ($LoginConfig.allowInsecureTls -eq $true)
@@ -69,7 +77,7 @@ function Connect-PucSession {
         if ([string]$success -ne [string]$Adapter.operations.login.selectors.successExpected) { throw 'Login API response reported failure.' }
         $token = [string](Get-PucPropertyPath $response ([string]$Adapter.token.responsePath))
         if ([string]::IsNullOrWhiteSpace($token)) { throw 'Authentication did not return a token.' }
-        [pscustomobject]@{ Token = $token; User = [string]$LoginConfig.adminUser; BaseUrl = $baseUrl }
+        [pscustomobject]@{ Token = $token; User = [string]$LoginConfig.adminUser; BaseUrl = $baseUrl; PucId = $pucId }
     } finally {
         if ($callbackChanged) { [Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCallback }
     }

@@ -37,6 +37,7 @@ function New-ModuleConfig($module) {
         loginUserEnv = 'PUC_ADMIN_USER'
         loginPasswordEnv = 'PUC_ADMIN_PASSWORD'
         tokenEnv = 'PUC_TOKEN'
+        pucId = if ($null -ne $session) { [string]$session.PucId } else { '' }
     }
     foreach ($name in $runtimeValues.Keys) {
         $config | Add-Member -NotePropertyName $name -NotePropertyValue $runtimeValues[$name] -Force
@@ -46,6 +47,7 @@ function New-ModuleConfig($module) {
 
 $oldToken = [Environment]::GetEnvironmentVariable('PUC_TOKEN')
 $oldUser = [Environment]::GetEnvironmentVariable('PUC_ADMIN_USER')
+$session = $null
 $tempFiles = @()
 try {
     if (-not $PlanOnly) {

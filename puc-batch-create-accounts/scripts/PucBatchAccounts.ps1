@@ -245,6 +245,7 @@ if ([string]::IsNullOrWhiteSpace($token)) {
         username = $adminUser
         password = $adminPassword
         realm = $config.realm
+        pucId = $config.pucId
         captchaId = $captchaId
         captchaValue = $captchaValue
     }
@@ -259,30 +260,67 @@ if ([string]::IsNullOrWhiteSpace($token)) {
 if ([string]::IsNullOrWhiteSpace($token)) { throw 'Authentication did not return a token.' }
 $authHeader[$adapter.token.headerName] = $adapter.token.prefix + $token
 
-function Get-LookupId([string]$operationName, [string]$wantedName) {
-    $response = Invoke-Operation $operationName @{ realm = $config.realm; username = $adminUser }
-    $rows = @(Get-PropertyPath $response (Get-Selector $operationName 'rows'))
+function Get-LookupId([string]$operationName, [string]$wantedName, [switch]$AllowEmpty) {
+    $response = Invoke-Operation $operationName @{ realm = $config.realm; username = $adminUser; pucId = $config.pucId }
+    $rawRows = Get-PropertyPath $response (Get-Selector $operationName 'rows')
+    $rows = if ($null -eq $rawRows) { @() } else { @($rawRows) }
+    if ($rows.Count -eq 0 -and $AllowEmpty) { return '' }
     $nameSelector = Get-Selector $operationName 'name'
     $idSelector = Get-Selector $operationName 'id'
     $match = @($rows | Where-Object { (Get-PropertyPath $_ $nameSelector) -eq $wantedName })
     if ($match.Count -ne 1) { throw "$operationName lookup for '$wantedName' returned $($match.Count) matches" }
-    return Get-PropertyPath $match[0] $idSelector
+    $id = Get-PropertyPath $match[0] $idSelector
+    if ([string]::IsNullOrWhiteSpace([string]$id)) { throw "$operationName lookup for '$wantedName' returned an entry without a usable ID" }
+    return $id
 }
 
-$roleId = Get-LookupId 'roles' $config.highestRoleName
-$systemResponse = Invoke-Operation 'systems' @{ realm = $config.realm; username = $adminUser }
-$systemIds = @((Get-PropertyPath $systemResponse (Get-Selector 'systems' 'rows')) | ForEach-Object { Get-PropertyPath $_ (Get-Selector 'systems' 'id') })
-if ($systemIds.Count -eq 0 -or @($systemIds | Where-Object { $null -eq $_ }).Count -gt 0) {
-    throw 'System lookup returned no usable IDs; refusing to create an account without full system authorization.'
+function Get-HighestRole([string]$preferredName) {
+    $response = Invoke-Operation 'roles' @{ realm = $config.realm; username = $adminUser; pucId = $config.pucId }
+    $rawRows = Get-PropertyPath $response (Get-Selector 'roles' 'rows')
+    $rows = if ($null -eq $rawRows) { @() } else { @($rawRows) }
+    $nameSelector = Get-Selector 'roles' 'name'
+    $idSelector = Get-Selector 'roles' 'id'
+    if ($rows.Count -eq 0) { throw 'roles lookup returned no roles' }
+
+    $preferredRows = @($rows | Where-Object { (Get-PropertyPath $_ $nameSelector) -eq $preferredName })
+    $candidates = if ($preferredRows.Count -gt 0) { $preferredRows } else { $rows }
+    $ranked = @($candidates | ForEach-Object {
+        [pscustomobject]@{
+            Row = $_
+            PermissionCount = @($_.permission_list | Where-Object { [string]$_.permission_value -eq '1' }).Count
+        }
+    })
+    $highestPermissionCount = ($ranked | Measure-Object -Property PermissionCount -Maximum).Maximum
+    $highestRoles = @($ranked | Where-Object PermissionCount -eq $highestPermissionCount | ForEach-Object Row)
+    if ($highestRoles.Count -ne 1) {
+        $scope = if ($preferredRows.Count -gt 0) { "preferred role '$preferredName'" } else { 'all returned roles' }
+        throw "roles lookup remained ambiguous after permission-count ranking of $scope ($($highestRoles.Count) matches)"
+    }
+    $selected = $highestRoles[0]
+    $id = Get-PropertyPath $selected $idSelector
+    $name = Get-PropertyPath $selected $nameSelector
+    if ([string]::IsNullOrWhiteSpace([string]$id)) { throw 'Selected highest role did not contain a usable ID' }
+    if ([string]::IsNullOrWhiteSpace([string]$name)) { throw 'Selected highest role did not contain a usable name' }
+    return [pscustomobject]@{ Id = $id; Name = $name; PermissionCount = $highestPermissionCount }
 }
-$accessResponse = Invoke-Operation 'accessPoints' @{ realm = $config.realm; username = $adminUser }
-$accessRows = @(Get-PropertyPath $accessResponse (Get-Selector 'accessPoints' 'rows'))
+
+$selectedRole = Get-HighestRole $config.highestRoleName
+$systemResponse = Invoke-Operation 'systems' @{ realm = $config.realm; username = $adminUser; pucId = $config.pucId }
+$rawSystemRows = Get-PropertyPath $systemResponse (Get-Selector 'systems' 'rows')
+$systemRows = if ($null -eq $rawSystemRows) { @() } else { @($rawSystemRows) }
+$systemIds = @($systemRows | ForEach-Object { Get-PropertyPath $_ (Get-Selector 'systems' 'id') })
+if (@($systemIds | Where-Object { [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0) {
+    throw 'System lookup returned entries without usable IDs; refusing to create an account with incomplete system authorization.'
+}
+$accessResponse = Invoke-Operation 'accessPoints' @{ realm = $config.realm; username = $adminUser; pucId = $config.pucId }
+$rawAccessRows = Get-PropertyPath $accessResponse (Get-Selector 'accessPoints' 'rows')
+$accessRows = if ($null -eq $rawAccessRows) { @() } else { @($rawAccessRows) }
 $accessPointIds = @($accessRows | ForEach-Object { Get-PropertyPath $_ (Get-Selector 'accessPoints' 'id') })
-if ($accessPointIds.Count -eq 0 -or @($accessPointIds | Where-Object { $null -eq $_ }).Count -gt 0) {
-    throw 'Access-point lookup returned no usable IDs; refusing to create an account without full access-point authorization.'
+if (@($accessPointIds | Where-Object { [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0) {
+    throw 'Access-point lookup returned entries without usable IDs; refusing to create an account with incomplete access-point authorization.'
 }
-$deviceRootId = Get-LookupId 'deviceOrganizations' $config.rootOrganizationName
-$addressRootId = Get-LookupId 'addressBookOrganizations' $config.rootOrganizationName
+$deviceRootId = Get-LookupId 'deviceOrganizations' $config.rootOrganizationName -AllowEmpty
+$addressRootId = Get-LookupId 'addressBookOrganizations' $config.rootOrganizationName -AllowEmpty
 
 $dispatchSapList = $null
 if ($adapter.protocol -eq 'puc-command') {
@@ -328,8 +366,8 @@ while ($created -lt [int]$config.count) {
         continue
     }
     $variables = @{
-        account=$account; alias=$alias; dispatchNumber=$dispatch; password=$newPassword; realm=$config.realm
-        roleId=$roleId; roleName=$config.highestRoleName; systemIds=$systemIds; systemIdList=($systemIds -join ';')
+        account=$account; accountGuid=[guid]::NewGuid().ToString(); alias=$alias; dispatchNumber=$dispatch; password=$newPassword; realm=$config.realm
+        pucId=$config.pucId; roleId=$selectedRole.Id; roleName=$selectedRole.Name; systemIds=$systemIds; systemIdList=($systemIds -join ';')
         accessPointIds=$accessPointIds; dispatchSapList=$dispatchSapList
         authorizedDeviceOrgId=$deviceRootId; ownedDeviceOrgId=$deviceRootId
         authorizedAddressOrgId=$addressRootId; ownedAddressOrgId=$addressRootId

@@ -57,11 +57,14 @@ $server = Start-Job -ArgumentList $port -ScriptBlock {
                             if ($payload.captcha_id -eq 'captcha-1' -and $payload.captcha_value -eq '1234') { '{"result":0,"token":"mock-token"}' }
                             else { $status = 401; '{"result":1,"msg":"bad captcha"}' }
                         }
-                        'role_request' { '{"result":0,"role_list":[{"guid":"role-super","role_alias":"superadministrator"}]}' }
-                        'system_list_request' { '{"result":0,"system_list":[{"system_id":"070","system_alias":"RTSP"},{"system_id":"912","system_alias":"Dispatch"}]}' }
-                        'sap_list_request' { '{"result":0,"sap_base_list":[{"sap_guid":"base-070","sap_alias":"RTSP","sap_list":[{"puc_id":"00001","system_id":"070","domain_name":"puc.com","ssi":"7001","guid":"sap-070"}]},{"sap_guid":"base-912","sap_alias":"Dispatch","sap_list":[{"puc_id":"00001","system_id":"912","domain_name":"puc.com","ssi":"9001","guid":"sap-912"}]}]}' }
-                        'short_organization_list_request' { '{"result":0,"organization_info_list":[{"org_identifier":"00","org_alias":"Dispatch"}]}' }
-                        'personnel_organization_list_req' { '{"result":0,"organization_info_list":[{"custom_org_id":"00","custom_org_alias":"Dispatch"}]}' }
+                        'role_request' {
+                            if ($payload.puc_id -eq '30163' -and $payload.realm -eq 'puc.com') { '{"result":0,"role_list":[{"guid":"role-limited","role_alias":"administrator","enable_flag":0,"permission_list":[{"permission_value":"1"},{"permission_value":"0"}]},{"guid":"role-super","role_alias":"deployment-root","enable_flag":0,"permission_list":[{"permission_value":"1"},{"permission_value":"1"}]}]}' }
+                            else { '{"result":0,"role_list":[]}' }
+                        }
+                        'system_list_request' { '{"result":0,"count":0,"system_list":null}' }
+                        'sap_list_request' { '{"result":0,"count":0,"sap_base_list":[]}' }
+                        'short_organization_list_request' { '{"result":0,"organization_info_list":[]}' }
+                        'personnel_organization_list_req' { '{"result":0,"organization_info_list":null}' }
                         'account_list_request' {
                             if ($payload.querykey -eq 'lzw168011') { '{"result":0,"account_list":[{"dispatcher_account":"lzw168011","dispatcher_no":"1700000000000"}]}' }
                             else { '{"result":0,"account_list":[]}' }
@@ -69,12 +72,14 @@ $server = Start-Job -ArgumentList $port -ScriptBlock {
                         'add_account' {
                             $dispatchSap = $payload.dispatch_sap_list | ConvertFrom-Json
                             $valid = $payload.dispatcher_account -eq 'lzw168012' -and $payload.dispatcher_name -eq 'alias012' -and
+                                $payload.puc_id -eq '30163' -and
+                                [string]$payload.guid -match '^[0-9a-fA-F-]{36}$' -and
                                 [string]$payload.dispatcher_no -match '^\d{13}$' -and $payload.dispatcher_pwd -eq '00112233445566778899aabbccddeeff' -and
-                                $payload.role -eq 'superadministrator' -and
-                                $payload.role_guid -eq 'role-super' -and $payload.system_id_list -eq '070;912' -and
-                                $payload.org_identifier -eq '00' -and $payload.org_identifier_list -eq '00' -and
-                                $payload.custom_org_id -eq '00' -and $payload.custom_org_identifier_list -eq '00' -and
-                                @($dispatchSap.sapList).Count -eq 2 -and @($payload.imei_list).Count -eq 0
+                                $payload.role -eq 'deployment-root' -and
+                                $payload.role_guid -eq 'role-super' -and $payload.system_id_list -eq '' -and
+                                $payload.org_identifier -eq '' -and $payload.org_identifier_list -eq '' -and
+                                $payload.custom_org_id -eq '' -and $payload.custom_org_identifier_list -eq '' -and
+                                @($dispatchSap.sapList).Count -eq 0 -and @($payload.imei_list).Count -eq 0
                             if ($valid) { '{"result":0,"msg":""}' } else { $status = 422; '{"result":1,"msg":"invalid payload"}' }
                         }
                         default { $status = 404; '{"result":1,"msg":"unknown command"}' }
@@ -100,7 +105,7 @@ try {
     Start-Sleep -Milliseconds 500
     if ($server.State -ne 'Running') { throw 'Mock PUC command server failed to start.' }
     $config = @{
-        baseUrl="http://127.0.0.1:$port";allowInsecureTls=$false;realm='puc.com';ipSuffix='168';startSequence=11;count=1
+        baseUrl="http://127.0.0.1:$port";allowInsecureTls=$false;realm='puc.com';pucId='30163';ipSuffix='168';startSequence=11;count=1
         accountPrefix='lzw';aliasPrefix='alias';defaultAccountPassword='00112233445566778899aabbccddeeff';loginUserEnv='PUC_TEST_ADMIN_USER'
         loginPasswordEnv='PUC_TEST_ADMIN_PASSWORD';captchaValueEnv='PUC_TEST_CAPTCHA';openCaptchaImage=$false
         captchaImagePath=(Join-Path $tempRoot 'captcha.png');highestRoleName='superadministrator';rootOrganizationName='Dispatch'

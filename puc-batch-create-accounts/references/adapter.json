@@ -7,11 +7,24 @@
                   "headerName":  "token",
                   "prefix":  ""
               },
+    "pucId":  {
+                  "responsePath":  "common_info.puc_id"
+              },
     "captcha":  {
                     "idResponsePath":  "uuid",
                     "imageResponsePath":  "captcha"
                 },
     "operations":  {
+                       "commonConfig":  {
+                                            "method":  "POST",
+                                            "path":  "/confs",
+                                            "headers":  {
+                                                            "Accept":  "application/json, text/plain, */*"
+                                                        },
+                                            "bodyTemplate":  {
+                                                                 "cmd_name":  "common_cfg_request"
+                                                             }
+                                        },
                        "captcha":  {
                                        "method":  "POST",
                                        "path":  "/confs",
@@ -36,6 +49,7 @@
                                                           "puc_passwd":  "{{password}}",
                                                           "captcha_id":  "{{captchaId}}",
                                                           "captcha_value":  "{{captchaValue}}",
+                                                          "puc_id":  "{{pucId}}",
                                                           "cmd_name":  "login_puc_account"
                                                       },
                                      "selectors":  {
@@ -76,8 +90,9 @@
                                                  },
                                      "bodyTemplate":  {
                                                           "cmd_name":  "role_request",
-                                                          "puc_id":  "00001",
-                                                          "user_id":  "{{username}}"
+                                                          "puc_id":  "{{pucId}}",
+                                                          "user_id":  "{{username}}",
+                                                          "realm":  "{{realm}}"
                                                       },
                                      "selectors":  {
                                                        "rows":  "role_list",
@@ -93,7 +108,7 @@
                                                    },
                                        "bodyTemplate":  {
                                                             "cmd_name":  "system_list_request",
-                                                            "puc_id":  "00001",
+                                                            "puc_id":  "{{pucId}}",
                                                             "user_id":  "{{username}}",
                                                             "realm":  "{{realm}}"
                                                         },
@@ -111,7 +126,7 @@
                                                         },
                                             "bodyTemplate":  {
                                                                  "cmd_name":  "sap_list_request",
-                                                                 "puc_id":  "00001",
+                                                                 "puc_id":  "{{pucId}}",
                                                                  "realm":  "{{realm}}"
                                                              },
                                             "selectors":  {
@@ -128,7 +143,7 @@
                                                                },
                                                    "bodyTemplate":  {
                                                                         "cmd_name":  "short_organization_list_request",
-                                                                        "puc_id":  "00001",
+                                                                        "puc_id":  "{{pucId}}",
                                                                         "user_id":  "{{username}}",
                                                                         "realm":  "{{realm}}",
                                                                         "org_identifier":  "",
@@ -148,7 +163,7 @@
                                                                     },
                                                         "bodyTemplate":  {
                                                                              "cmd_name":  "personnel_organization_list_req",
-                                                                             "puc_id":  "00001",
+                                                                             "puc_id":  "{{pucId}}",
                                                                              "user_id":  "{{username}}",
                                                                              "realm":  "{{realm}}",
                                                                              "custom_org_id":  "",
@@ -169,14 +184,14 @@
                                              "bodyTemplate":  {
                                                                   "cmd_name":  "add_account",
                                                                   "dispatcher_no":  "{{dispatchNumber}}",
-                                                                  "guid":  "a0Af05Ee-DaD7-a611-aEfc-F6A2D1cb3930",
+                                                                  "guid":  "{{accountGuid}}",
                                                                   "dispatcher_account":  "{{account}}",
                                                                   "dispatcher_name":  "{{alias}}",
                                                                   "dispatcher_pwd":  "{{password}}",
                                                                   "org_identifier":  "{{ownedDeviceOrgId}}",
                                                                   "org_alias":  "Dispatch",
                                                                   "realm":  "{{realm}}",
-                                                                  "puc_id":  "00001",
+                                                                  "puc_id":  "{{pucId}}",
                                                                   "system_id":  "",
                                                                   "is_sync":  0,
                                                                   "role":  "{{roleName}}",

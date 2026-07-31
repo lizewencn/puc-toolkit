@@ -143,14 +143,14 @@ if ([string]::IsNullOrWhiteSpace($token)) {
     if ($config.openCaptchaImage -eq $true) { Start-Process -FilePath $imagePath }
     $captchaValue = Get-EnvironmentValue $config.captchaValueEnv
     if ([string]::IsNullOrWhiteSpace($captchaValue)) { $captchaValue = Read-Host 'Enter the captcha shown in the image' }
-    $login = Invoke-Operation 'login' @{ username=$adminUser; password=$adminPassword; realm=$config.realm; captchaId=$captchaId; captchaValue=$captchaValue }
+    $login = Invoke-Operation 'login' @{ username=$adminUser; password=$adminPassword; realm=$config.realm; pucId=$config.pucId; captchaId=$captchaId; captchaValue=$captchaValue }
     if ([string](Get-PropertyPath $login $adapter.operations.login.selectors.success) -ne [string]$adapter.operations.login.selectors.successExpected) { throw 'Login API response reported failure.' }
     $token = Get-PropertyPath $login $adapter.token.responsePath
 }
 if ([string]::IsNullOrWhiteSpace($token)) { throw 'Authentication did not return a token.' }
 $authHeader[$adapter.token.headerName] = $adapter.token.prefix + $token
 
-$orgResponse = Invoke-Operation 'organizations' @{ username=$adminUser; realm=$config.realm }
+$orgResponse = Invoke-Operation 'organizations' @{ username=$adminUser; realm=$config.realm; pucId=$config.pucId }
 $orgRows = @(Get-PropertyPath $orgResponse $adapter.operations.organizations.selectors.rows)
 $orgMatch = @($orgRows | Where-Object { $_.custom_org_alias -eq $config.rootOrganizationName })
 if ($orgMatch.Count -ne 1) { throw "Root organization lookup returned $($orgMatch.Count) matches." }
@@ -159,7 +159,7 @@ $organizationId = $orgMatch[0].custom_org_id
 function Find-Duplicate($person) {
     foreach ($field in @('officerId','idNumber','mobile')) {
         $value = [string]$person.$field
-        $response = Invoke-Operation 'searchPersonnel' @{ username=$adminUser; realm=$config.realm; query=$value; commandGuid=[guid]::NewGuid().ToString() }
+        $response = Invoke-Operation 'searchPersonnel' @{ username=$adminUser; realm=$config.realm; pucId=$config.pucId; query=$value; commandGuid=[guid]::NewGuid().ToString() }
         $rows = @(Get-PropertyPath $response $adapter.operations.searchPersonnel.selectors.rows)
         $selector = [string]$adapter.operations.searchPersonnel.selectors.$field
         if (@($rows | Where-Object { [string](Get-PropertyPath $_ $selector) -eq $value }).Count -gt 0) { return $field }
@@ -188,7 +188,7 @@ while ($created -lt [int]$config.count) {
         $created++
     } elseif ($PSCmdlet.ShouldProcess($person.alias, 'Create PUC personnel')) {
         try {
-            $response = Invoke-Operation 'createPersonnel' @{ username=$adminUser; realm=$config.realm; commandGuid=[guid]::NewGuid().ToString(); officerId=$person.officerId; alias=$person.alias; policeTypeGuid=$config.policeTypeGuid; organizationId=$organizationId; organizationName=$config.rootOrganizationName; idNumber=$person.idNumber; mobile=$person.mobile }
+            $response = Invoke-Operation 'createPersonnel' @{ username=$adminUser; realm=$config.realm; pucId=$config.pucId; commandGuid=[guid]::NewGuid().ToString(); officerId=$person.officerId; alias=$person.alias; policeTypeGuid=$config.policeTypeGuid; organizationId=$organizationId; organizationName=$config.rootOrganizationName; idNumber=$person.idNumber; mobile=$person.mobile }
             if ([string](Get-PropertyPath $response $adapter.operations.createPersonnel.selectors.success) -ne [string]$adapter.operations.createPersonnel.selectors.successExpected) { throw "API response reported failure: $($response | ConvertTo-Json -Compress)" }
             $results.Add([pscustomobject]@{ sequence=$sequence; alias=$person.alias; officerId=$person.officerId; idNumber=$person.idNumber; mobile=$person.mobile; status='created'; reason='' })
             $created++

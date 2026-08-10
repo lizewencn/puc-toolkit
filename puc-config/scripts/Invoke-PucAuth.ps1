@@ -1,0 +1,213 @@
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)][ValidateSet('Validate','InteractiveLogin','Captcha','Login')][string]$Action,
+    [Parameter(Mandatory)][string]$Environment,
+    [string]$CaptchaValue,
+    [string]$ConfigRoot
+)
+
+$ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'PucConfig.psm1') -Force
+$root = Get-PucConfigRoot $ConfigRoot
+$environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
+$adapter = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '..\references\accounts-adapter.json') | ConvertFrom-Json
+$baseUri = [uri]$environmentConfig.baseUrl
+$oldCallback = [Net.ServicePointManager]::ServerCertificateValidationCallback
+$callbackChanged = $false
+if ($environmentConfig.allowInsecureTls -eq $true -and -not (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
+    [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+    $callbackChanged = $true
+}
+
+function Invoke-JsonRequest($Body, [hashtable]$Headers) {
+    [byte[]]$jsonBody = ConvertTo-PucJsonBytes -Value $Body -Depth 30
+    $params = @{
+        Method = 'POST'
+        Uri = $baseUri.AbsoluteUri.TrimEnd('/') + '/confs'
+        ContentType = 'application/json; charset=utf-8'
+        Body = $jsonBody
+        Headers = if ($null -eq $Headers) { @{ Accept='application/json, text/plain, */*' } } else { $Headers }
+    }
+    if ($environmentConfig.allowInsecureTls -eq $true -and (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
+        $params.SkipCertificateCheck = $true
+    }
+    return ConvertFrom-PucResponseEncoding -Value (Invoke-RestMethod @params)
+}
+
+function New-RuntimeEntry($PendingLogin) {
+    $entry = [ordered]@{ name=$Environment }
+    if ($null -ne $PendingLogin) { $entry.pendingLogin=$PendingLogin }
+    return $entry
+}
+
+function Set-EnvironmentAuth([string]$Token,[string]$PucId) {
+    $configPath = Join-Path $root 'config.json'
+    $document = Read-PucJson -Path $configPath -Default $null
+    $entry = Get-PucEntry -Document $document -Name $Environment
+    if ($null -eq $entry) { throw "Environment '$Environment' no longer exists in config.json." }
+    $entry | Add-Member -NotePropertyName token -NotePropertyValue $Token -Force
+    $entry | Add-Member -NotePropertyName pucId -NotePropertyValue $PucId -Force
+    Write-PucJson -Path $configPath -Value (Set-PucEntry -Document $document -Name $Environment -Entry $entry)
+}
+
+function Get-SessionPaths([string]$SessionId) {
+    if ($SessionId -notmatch '^[a-f0-9]{32}$') { throw 'Pending login session ID is invalid.' }
+    $directory = Join-Path (Join-Path $root 'login-runtime') $SessionId
+    return [pscustomobject]@{
+        Directory=$directory
+        Ready=Join-Path $directory 'ready.json'
+        Input=Join-Path $directory 'input.json'
+        Result=Join-Path $directory 'result.json'
+        Image=Join-Path $root ("captcha-$SessionId.png")
+    }
+}
+
+function Clear-PendingLogin([string]$SessionId) {
+    Set-PucRuntimeEntry -ConfigRoot $root -Name $Environment -Entry (New-RuntimeEntry -PendingLogin $null)
+    if ([string]::IsNullOrWhiteSpace($SessionId) -or $SessionId -notmatch '^[a-f0-9]{32}$') { return }
+    $paths = Get-SessionPaths $SessionId
+    foreach ($file in @($paths.Ready,$paths.Input,$paths.Input+'.tmp',$paths.Result,$paths.Result+'.tmp',$paths.Image)) {
+        if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force }
+    }
+    if (Test-Path -LiteralPath $paths.Directory) {
+        $remaining = @(Get-ChildItem -LiteralPath $paths.Directory -Force)
+        if ($remaining.Count -eq 0) { Remove-Item -LiteralPath $paths.Directory -Force }
+    }
+}
+
+function Write-AtomicJson([string]$Path,$Value) {
+    $temporaryPath = $Path + '.tmp'
+    $Value | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $temporaryPath -Encoding UTF8
+    Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
+}
+
+try {
+    if ($Action -eq 'Validate') {
+        if ([string]::IsNullOrWhiteSpace([string]$environmentConfig.token)) {
+            [pscustomobject]@{status='token_checked';environment=$Environment;valid=$false;reason='missing'} | ConvertTo-Json -Compress
+            return
+        }
+        $token = [string]$environmentConfig.token
+        $headers = @{Accept='application/json, text/plain, */*';([string]$adapter.token.headerName)=([string]$adapter.token.prefix+$token)}
+        $body = [ordered]@{cmd_name='role_request';puc_id=[string]$environmentConfig.pucId;user_id=[string]$environmentConfig.adminAccount;realm=[string]$environmentConfig.realm}
+        try { $response = Invoke-JsonRequest -Body $body -Headers $headers }
+        catch {
+            $statusCode = $null
+            if ($_.Exception.Response) { try{$statusCode=[int]$_.Exception.Response.StatusCode}catch{$statusCode=$null} }
+            if ($statusCode -notin @(401,403)) { throw }
+            Set-EnvironmentAuth -Token '' -PucId ([string]$environmentConfig.pucId)
+            [pscustomobject]@{status='token_checked';environment=$Environment;valid=$false;reason='rejected'} | ConvertTo-Json -Compress
+            return
+        }
+        if ([string]$response.result -eq '0') {
+            [pscustomobject]@{status='token_checked';environment=$Environment;valid=$true;reason=''} | ConvertTo-Json -Compress
+            return
+        }
+        Set-EnvironmentAuth -Token '' -PucId ([string]$environmentConfig.pucId)
+        [pscustomobject]@{status='token_checked';environment=$Environment;valid=$false;reason='rejected';result=[string]$response.result;msg=[string]$response.msg} | ConvertTo-Json -Compress
+        return
+    }
+
+    $runtime = Get-PucRuntimeEntry -ConfigRoot $root -Name $Environment
+    if ($Action -in @('InteractiveLogin','Captcha')) {
+        if ($null -ne $runtime -and $null -ne $runtime.pendingLogin) {
+            $oldSessionId = [string]$runtime.pendingLogin.sessionId
+            $oldProcess = Get-Process -Id ([int]$runtime.pendingLogin.processId) -ErrorAction SilentlyContinue
+            if ($null -ne $oldProcess -and -not $oldProcess.HasExited) {
+                throw "A login worker is already waiting for captcha input for environment '$Environment'."
+            }
+            Clear-PendingLogin $oldSessionId
+        }
+        $sessionId = [guid]::NewGuid().ToString('N')
+        $paths = Get-SessionPaths $sessionId
+        New-Item -ItemType Directory -Force -Path $paths.Directory | Out-Null
+        $workerPath = Join-Path $PSScriptRoot 'PucLoginWorker.ps1'
+        $interactiveArgument = if ($Action -eq 'InteractiveLogin') { ' -Interactive' } else { '' }
+        $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$workerPath`" -Environment `"$Environment`" -SessionId $sessionId -ConfigRoot `"$root`" -InputTimeoutSeconds 55$interactiveArgument"
+        $windowStyle = if ($Action -eq 'InteractiveLogin') { 'Normal' } else { 'Hidden' }
+        $process = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WindowStyle $windowStyle -PassThru
+        $deadline = [DateTimeOffset]::UtcNow.AddSeconds(30)
+        while (-not (Test-Path -LiteralPath $paths.Ready)) {
+            if (Test-Path -LiteralPath $paths.Result) {
+                $failure = Get-Content -Raw -LiteralPath $paths.Result | ConvertFrom-Json
+                Clear-PendingLogin $sessionId
+                throw "Captcha worker failed: $([string]$failure.detail)"
+            }
+            if ($process.HasExited) {
+                Clear-PendingLogin $sessionId
+                throw "Captcha worker exited before returning a captcha (exit code $($process.ExitCode))."
+            }
+            if ([DateTimeOffset]::UtcNow -ge $deadline) {
+                throw 'Captcha worker did not become ready within 30 seconds.'
+            }
+            Start-Sleep -Milliseconds 100
+            $process.Refresh()
+        }
+        $ready = Get-Content -Raw -LiteralPath $paths.Ready | ConvertFrom-Json
+        $pending = [ordered]@{
+            sessionId=$sessionId; processId=$process.Id; processStartTime=$process.StartTime.ToUniversalTime().ToString('o')
+            fetchedAt=[string]$ready.fetchedAt
+        }
+        Set-PucRuntimeEntry -ConfigRoot $root -Name $Environment -Entry (New-RuntimeEntry -PendingLogin $pending)
+        if ($Action -eq 'InteractiveLogin') {
+            $resultDeadline = [DateTimeOffset]::Parse([string]$ready.fetchedAt).AddSeconds(65)
+            while (-not (Test-Path -LiteralPath $paths.Result)) {
+                if ([DateTimeOffset]::UtcNow -ge $resultDeadline) {
+                    if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
+                    Clear-PendingLogin $sessionId
+                    throw 'Interactive login did not finish before the captcha expired. No retry was attempted.'
+                }
+                Start-Sleep -Milliseconds 100
+            }
+            $result = Get-Content -Raw -LiteralPath $paths.Result | ConvertFrom-Json
+            try { $process.WaitForExit(5000) | Out-Null } catch {}
+            Clear-PendingLogin $sessionId
+            if ([string]$result.status -ne 'login_succeeded') {
+                $parts = @()
+                if (-not [string]::IsNullOrWhiteSpace([string]$result.result)) { $parts += "result=$([string]$result.result)" }
+                if (-not [string]::IsNullOrWhiteSpace([string]$result.msg)) { $parts += "msg=$([string]$result.msg)" }
+                if ($parts.Count -eq 0) { $parts += [string]$result.detail }
+                throw ('Login was rejected: ' + ($parts -join '; ') + '. No retry was attempted.')
+            }
+            [pscustomobject]@{status='login_succeeded';environment=$Environment;tokenSaved=$true;sameProcess=$true;interactive=$true} | ConvertTo-Json -Compress
+            return
+        }
+        [pscustomobject]@{status='captcha_ready';environment=$Environment;imagePath=[string]$ready.imagePath;sessionId=$sessionId;workerProcessId=$process.Id} | ConvertTo-Json -Compress
+        return
+    }
+
+    if ([string]::IsNullOrWhiteSpace($CaptchaValue)) { throw 'CaptchaValue is required for login.' }
+    if ($null -eq $runtime -or $null -eq $runtime.pendingLogin) { throw 'No pending same-process login exists. Fetch a fresh captcha first.' }
+    $sessionId = [string]$runtime.pendingLogin.sessionId
+    $paths = Get-SessionPaths $sessionId
+    if (Test-Path -LiteralPath $paths.Result) {
+        $earlyResult = Get-Content -Raw -LiteralPath $paths.Result | ConvertFrom-Json
+        Clear-PendingLogin $sessionId
+        throw "Login worker is no longer waiting: $([string]$earlyResult.detail)"
+    }
+    $process = Get-Process -Id ([int]$runtime.pendingLogin.processId) -ErrorAction SilentlyContinue
+    if ($null -eq $process -or $process.HasExited) {
+        Clear-PendingLogin $sessionId
+        throw 'The same-process login worker is no longer running. Fetch a fresh captcha before another explicit attempt.'
+    }
+    $inputDocument = [ordered]@{captchaValue=Protect-PucString $CaptchaValue;submittedAt=[DateTimeOffset]::UtcNow.ToString('o')}
+    Write-AtomicJson -Path $paths.Input -Value $inputDocument
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds(60)
+    while (-not (Test-Path -LiteralPath $paths.Result)) {
+        if ([DateTimeOffset]::UtcNow -ge $deadline) { throw 'Login worker did not return a result within 60 seconds; no retry was attempted.' }
+        Start-Sleep -Milliseconds 100
+    }
+    $result = Get-Content -Raw -LiteralPath $paths.Result | ConvertFrom-Json
+    try { $process.WaitForExit(5000) | Out-Null } catch {}
+    Clear-PendingLogin $sessionId
+    if ([string]$result.status -ne 'login_succeeded') {
+        $parts = @()
+        if (-not [string]::IsNullOrWhiteSpace([string]$result.result)) { $parts += "result=$([string]$result.result)" }
+        if (-not [string]::IsNullOrWhiteSpace([string]$result.msg)) { $parts += "msg=$([string]$result.msg)" }
+        if ($parts.Count -eq 0) { $parts += [string]$result.detail }
+        throw ('Login was rejected: ' + ($parts -join '; ') + '. No retry was attempted.')
+    }
+    [pscustomobject]@{status='login_succeeded';environment=$Environment;tokenSaved=$true;sameProcess=$true} | ConvertTo-Json -Compress
+} finally {
+    if ($callbackChanged) { [Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCallback }
+}

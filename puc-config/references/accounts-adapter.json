@@ -1,0 +1,223 @@
+﻿{
+    "generatedFrom":  "captured-session.har",
+    "generatedAt":  "2026-07-20T19:22:42.9575600+08:00",
+    "protocol":  "puc-command",
+    "token":  {
+                  "responsePath":  "token",
+                  "headerName":  "token",
+                  "prefix":  ""
+              },
+    "pucId":  {
+                  "responsePath":  "common_info.puc_id"
+              },
+    "captcha":  {
+                    "idResponsePath":  "uuid",
+                    "imageResponsePath":  "captcha"
+                },
+    "operations":  {
+                       "commonConfig":  {
+                                            "method":  "POST",
+                                            "path":  "/confs",
+                                            "headers":  {
+                                                            "Accept":  "application/json, text/plain, */*"
+                                                        },
+                                            "bodyTemplate":  {
+                                                                 "cmd_name":  "common_cfg_request"
+                                                             }
+                                        },
+                       "captcha":  {
+                                       "method":  "POST",
+                                       "path":  "/confs",
+                                       "headers":  {
+                                                       "Accept":  "application/json, text/plain, */*"
+                                                   },
+                                       "bodyTemplate":  {
+                                                            "cmd_name":  "puc_get_captcha",
+                                                            "height":  34,
+                                                            "width":  120
+                                                        }
+                                   },
+                       "login":  {
+                                     "method":  "POST",
+                                     "path":  "/confs",
+                                     "headers":  {
+                                                     "Accept":  "application/json, text/plain, */*"
+                                                 },
+                                     "bodyTemplate":  {
+                                                          "realm":  "{{realm}}",
+                                                          "puc_account":  "{{username}}",
+                                                          "puc_passwd":  "{{password}}",
+                                                          "captcha_id":  "{{captchaId}}",
+                                                          "captcha_value":  "{{captchaValue}}",
+                                                          "puc_id":  "{{pucId}}",
+                                                          "cmd_name":  "login_puc_account"
+                                                      },
+                                     "selectors":  {
+                                                       "success":  "result",
+                                                       "successExpected":  0
+                                                   }
+                                 },
+                       "searchAccounts":  {
+                                              "method":  "POST",
+                                              "path":  "/confs",
+                                              "headers":  {
+                                                              "Accept":  "application/json, text/plain, */*"
+                                                          },
+                                              "bodyTemplate":  {
+                                                                   "cmd_name":  "account_list_request",
+                                                                   "user_id":  "{{username}}",
+                                                                   "realm":  "{{realm}}",
+                                                                   "page_sizes":  "{{pageSize}}",
+                                                                   "page_index":  "{{pageIndex}}",
+                                                                   "querykey":  "{{query}}",
+                                                                   "lock_query":  0,
+                                                                   "filter":  {
+                                                                                  "by_role":  "",
+                                                                                  "by_state":  0
+                                                                              }
+                                                               },
+                                              "selectors":  {
+                                                                "rows":  "account_list",
+                                                                "account":  "dispatcher_account",
+                                                                "dispatchNumber":  "dispatcher_no",
+                                                                "pageCount":  "page_count",
+                                                                "totalCount":  "count"
+                                                            }
+                                          },
+                       "roles":  {
+                                     "method":  "POST",
+                                     "path":  "/confs",
+                                     "headers":  {
+                                                     "Accept":  "application/json, text/plain, */*"
+                                                 },
+                                     "bodyTemplate":  {
+                                                          "cmd_name":  "role_request",
+                                                          "puc_id":  "{{pucId}}",
+                                                          "user_id":  "{{username}}",
+                                                          "realm":  "{{realm}}"
+                                                      },
+                                     "selectors":  {
+                                                       "rows":  "role_list",
+                                                       "id":  "guid",
+                                                       "name":  "role_alias"
+                                                   }
+                                 },
+                       "systems":  {
+                                       "method":  "POST",
+                                       "path":  "/confs",
+                                       "headers":  {
+                                                       "Accept":  "application/json, text/plain, */*"
+                                                   },
+                                       "bodyTemplate":  {
+                                                            "cmd_name":  "system_list_request",
+                                                            "puc_id":  "{{pucId}}",
+                                                            "user_id":  "{{username}}",
+                                                            "realm":  "{{realm}}"
+                                                        },
+                                       "selectors":  {
+                                                         "rows":  "system_list",
+                                                         "id":  "system_id",
+                                                         "name":  "system_alias"
+                                                     }
+                                   },
+                       "accessPoints":  {
+                                            "method":  "POST",
+                                            "path":  "/confs",
+                                            "headers":  {
+                                                            "Accept":  "application/json, text/plain, */*"
+                                                        },
+                                            "bodyTemplate":  {
+                                                                 "cmd_name":  "sap_list_request",
+                                                                 "puc_id":  "{{pucId}}",
+                                                                 "realm":  "{{realm}}"
+                                                             },
+                                            "selectors":  {
+                                                              "rows":  "sap_base_list",
+                                                              "id":  "sap_guid",
+                                                              "name":  "sap_alias"
+                                                          }
+                                        },
+                       "deviceOrganizations":  {
+                                                   "method":  "POST",
+                                                   "path":  "/confs",
+                                                   "headers":  {
+                                                                   "Accept":  "application/json, text/plain, */*"
+                                                               },
+                                                   "bodyTemplate":  {
+                                                                        "cmd_name":  "short_organization_list_request",
+                                                                        "puc_id":  "{{pucId}}",
+                                                                        "user_id":  "{{username}}",
+                                                                        "realm":  "{{realm}}",
+                                                                        "org_identifier":  "",
+                                                                        "is_recursive_qry":  0
+                                                                    },
+                                                   "selectors":  {
+                                                                     "rows":  "organization_info_list",
+                                                                     "id":  "org_identifier",
+                                                                     "name":  "org_alias"
+                                                                 }
+                                               },
+                       "addressBookOrganizations":  {
+                                                        "method":  "POST",
+                                                        "path":  "/confs",
+                                                        "headers":  {
+                                                                        "Accept":  "application/json, text/plain, */*"
+                                                                    },
+                                                        "bodyTemplate":  {
+                                                                             "cmd_name":  "personnel_organization_list_req",
+                                                                             "puc_id":  "{{pucId}}",
+                                                                             "user_id":  "{{username}}",
+                                                                             "realm":  "{{realm}}",
+                                                                             "custom_org_id":  "",
+                                                                             "is_recursive_qry":  0
+                                                                         },
+                                                        "selectors":  {
+                                                                          "rows":  "organization_info_list",
+                                                                          "id":  "custom_org_id",
+                                                                          "name":  "custom_org_alias"
+                                                                      }
+                                                    },
+                       "createAccount":  {
+                                             "method":  "POST",
+                                             "path":  "/confs",
+                                             "headers":  {
+                                                             "Accept":  "application/json, text/plain, */*"
+                                                         },
+                                             "bodyTemplate":  {
+                                                                  "cmd_name":  "add_account",
+                                                                  "dispatcher_no":  "{{dispatchNumber}}",
+                                                                  "guid":  "{{accountGuid}}",
+                                                                  "dispatcher_account":  "{{account}}",
+                                                                  "dispatcher_name":  "{{alias}}",
+                                                                  "dispatcher_pwd":  "{{password}}",
+                                                                  "org_identifier":  "{{ownedDeviceOrgId}}",
+                                                                  "org_alias":  "Dispatch",
+                                                                  "realm":  "{{realm}}",
+                                                                  "puc_id":  "{{pucId}}",
+                                                                  "system_id":  "",
+                                                                  "is_sync":  0,
+                                                                  "role":  "{{roleName}}",
+                                                                  "role_guid":  "{{roleId}}",
+                                                                  "org_identifier_list":  "{{authorizedDeviceOrgId}}",
+                                                                  "custom_org_identifier_list":  "{{authorizedAddressOrgId}}",
+                                                                  "custom_org_id":  "{{ownedAddressOrgId}}",
+                                                                  "dispatch_sap_list":  "{{dispatchSapList}}",
+                                                                  "imei_list":  [],
+                                                                  "device_sn":  "",
+                                                                  "device_group_list":  "",
+                                                                  "system_id_list":  "{{systemIdList}}",
+                                                                  "sort_id":  null,
+                                                                  "saprule_type":  0,
+                                                                  "dispatcher_priority":  1,
+                                                                  "device_type":  29,
+                                                                  "dispatcher_type":  0,
+                                                                  "avatar_url":  "",
+                                                                  "avatar_md5sum":  ""
+                                                              },
+                                             "selectors":  {
+                                                               "success":  "result",
+                                                               "successExpected":  0
+                                                           }
+                                         }
+                   }
+}

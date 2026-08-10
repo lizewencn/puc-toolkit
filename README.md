@@ -1,37 +1,88 @@
-# PUC Config Toolkit
+# PUC Config 技能
 
-Private collaborative repository for PUC configuration-management skills. The manager authenticates once, owns the token, and supplies it to enabled account and personnel modules.
+## 基本信息
 
-## Install
+- **技能名称**：`puc-config`
+- **技能目录**：`puc-config/`
+- **用途**：通过 PUC 配置接口，对指定 PUC 环境执行认证、账号与通讯录人员管理、配置文件与 License 迁移、权限菜单导入以及平台功能开关配置。
+- **主要运行环境**：Windows PowerShell。
+- **技能入口**：`puc-config/SKILL.md`
+- **本地配置目录**：默认使用桌面下的 `agentSkillLocalConfig/puc-config/`，保存环境配置及运行状态。
+- **扩展方式**：每项业务流程在 `puc-config/references/` 下使用独立说明文件，并由 `SKILL.md` 统一路由。
 
-```powershell
-.\Install-PucToolkit.ps1
+## 功能列表
+
+### 1. 环境与认证
+
+- 初始化或更新指定 PUC 环境的连接信息。
+- 复用已保存的 Token，并在使用前执行有效性校验。
+- Token 失效时，通过本地交互式验证码窗口重新登录。
+- 支持复用已有环境的通用连接约定和本地密码配置。
+- 保存环境对应的 PUC ID，供后续配置请求使用。
+
+### 2. 调度账号管理
+
+- 按账号前缀、起始序号和数量批量创建调度账号。
+- 根据目标环境 IP 自动生成带环境后缀的账号和别名。
+- 创建前查询目标环境，跳过重复账号或调度号码。
+- 自动解析角色、系统、接入点以及根组织等创建参数。
+- 对批量操作执行认证预检，并输出逐项执行结果。
+- 查询并更新已有调度账号的可编辑信息。
+- 更新前生成账号快照哈希，避免基于过期数据覆盖修改。
+
+### 3. 通讯录人员管理
+
+- 按别名前缀、序号和数量批量创建通讯录人员。
+- 支持使用一个精确别名创建单个人员。
+- 支持将新建人员绑定到唯一匹配的调度账号。
+- 创建前检查组织、人员类型及重复数据。
+- 提供预检与逐项结果报告，写入失败或结果不确定时立即停止。
+
+### 4. 配置导入与导出
+
+- 从指定环境导出 PUC 配置文件。
+- 轮询导出任务进度并下载生成的配置文件。
+- 配置导出时同时导出对应的 License 文件。
+- 将指定的 `.json` 或 `.txt` 配置文件导入目标环境。
+- 导入前执行本地文件校验和在线预检。
+- 输出文件路径、大小和 SHA-256，便于核验与留档。
+
+### 5. License 管理
+
+- 单独导出指定环境的 License `.enc` 文件。
+- 将用户明确指定的 License 文件导入目标环境。
+- 导入前校验文件名、文件内容及目标环境。
+- 对导出文件报告路径、大小和 SHA-256，不输出文件内容或下载令牌。
+
+### 6. 权限菜单导入
+
+- 将用户指定的权限菜单 JSON 文件上传到目标环境。
+- 支持 `WebPUC`、`APP` 和 `WebConfs` 三种导入目标。
+- 校验菜单 JSON 的顶层结构、节点字段、选中状态和全局唯一键。
+- 导入前显示目标环境、文件摘要、目标端和菜单节点数量。
+
+### 7. 重复登录强制退出开关
+
+- 查询平台 `FORCE_LOGIN` 功能开关的当前状态。
+- 启用重复账号登录时自动退出旧会话。
+- 禁用重复账号登录时自动退出旧会话。
+- 自动解析目标环境的拓扑、网元和 MML 参数，并在修改后复查最终状态。
+
+## 目录结构
+
+```text
+puc-config/
+|-- SKILL.md            # 技能入口、能力路由和安全约束
+|-- agents/             # Agent 展示与调用配置
+|-- assets/             # 空白配置模板
+|-- references/         # 各业务功能的工作流说明与接口适配信息
+`-- scripts/            # 初始化、认证、预检和实际操作脚本
 ```
 
-The installer copies the three skills to `$CODEX_HOME\skills` (or `$HOME\.codex\skills`) and creates local configuration files from examples only when they do not already exist.
+## 安全说明
 
-Edit these local files after installation:
-
-- `puc-config-manager\manager_config.json`: server, port, realm, administrator ciphertext, TLS, and run mode.
-- `puc-batch-create-accounts\module_config.json`: account creation rules.
-- `puc-batch-create-personnel\module_config.json`: personnel creation rules.
-
-These files are ignored by Git. Never rename a local configuration to an example filename.
-
-## Run
-
-```cmd
-%USERPROFILE%\.codex\skills\puc-config-manager\PucConfigManager.cmd
-```
-
-The command accepts no parameters. Use `runMode: plan` first, `dry-run` for authenticated duplicate checks, and `live` only after explicit approval.
-
-## Safety
-
-Run before every commit:
-
-```powershell
-.\Test-RepositorySafety.ps1
-```
-
-Do not commit local configurations, reports, HAR captures, tokens, captcha images, or real ciphertext. Private repository visibility does not make credentials safe to commit.
+- `config.json`、`runtime.json`、密码、Token、验证码和 Cookie 均属于敏感信息，不应提交到技能目录或输出到对话和日志中。
+- 密码仅由用户在本地配置文件中维护；验证码仅在本地交互窗口中展示和输入。
+- 所有网络操作必须先解析到唯一目标环境，批量写入前必须完成认证预检。
+- 创建类请求失败或结果不确定时不会自动重试，以避免重复创建。
+- 配置、License 和权限菜单导入均要求使用用户明确指定的文件，不会自动从目录中选择文件。

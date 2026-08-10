@@ -1,4 +1,0 @@
-interface:
-  display_name: "PUC Batch Account Creator"
-  short_description: "Safely create PUC accounts in batches"
-  default_prompt: "Use $puc-batch-create-accounts to validate and batch-create PUC accounts from a configuration file."

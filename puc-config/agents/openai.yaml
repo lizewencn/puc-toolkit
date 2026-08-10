@@ -1,0 +1,4 @@
+interface:
+  display_name: "PUC Config"
+  short_description: "Manage PUC accounts, personnel, config, License, and switches"
+  default_prompt: "Use $puc-config to connect to a PUC environment and safely run a configuration task."

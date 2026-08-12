@@ -59,9 +59,8 @@ Authenticate with the shared saved-token workflow. Before any write:
 
 Classify each desired item:
 
-- `unchanged`: both code and name resolve to the same existing record and its name, code, normalized color, ZIP name, and tone file name equal the target. Skip it and continue.
 - `missing`: neither its code nor name exists. Prepare one create request.
-- `conflict`: its code or name exists but does not describe the same target record and values. Skip it, continue preparing other missing items, and never update or overwrite it.
+- `conflict`: at least one existing record has the same level code or the same level name as the desired item. This includes a record whose code and name both match the target exactly, regardless of whether its color, ZIP, tone, or other values match. Skip it, continue preparing other missing items, and never update or overwrite it.
 
 The dry run returns the environment, all five items, resolved ZIP paths and SHA-256 hashes, tone names, classifications, write count, and a deterministic preview hash. Do not expose tokens, full server records, icon contents, or request bodies.
 
@@ -69,9 +68,9 @@ The dry run returns the environment, all five items, resolved ZIP paths and SHA-
 
 Require the user to confirm the displayed environment, five-item summary, and preview hash. Live mode repeats the complete authenticated preflight and refuses to write unless the new hash equals `ExpectedPreviewHash`.
 
-Create missing levels in code order `00` through `04`. Send each create request exactly once. If a create response authoritatively reports that the item now conflicts or already exists, classify it as `conflict-skipped` and continue with later items. On any other failed or uncertain response, stop immediately; do not attempt later items and do not retry the failed item. Report `created`, `unchanged`, `conflict-skipped`, `failed`, and `not-attempted` items separately.
+Create missing levels in code order `00` through `04`. Send each create request exactly once. If a create response authoritatively reports that the item now conflicts or already exists, classify it as `conflict-skipped` and continue with later items. On any other failed or uncertain response, stop immediately; do not attempt later items and do not retry the failed item. Report `created`, `conflict-skipped`, `failed`, and `not-attempted` items separately.
 
-After writes finish, query the complete level list once. Require each item created by this run to be present and unchanged according to the same comparison rules. Existing preflight conflicts and authoritative create-time conflicts may remain conflicting and must be reported as `conflict-skipped`; they do not fail verification. If a created item cannot be verified, report the write results and verification failure without retrying creation.
+After writes finish, query the complete level list once. Require each item created by this run to be present with the target code, name, normalized color, ZIP name, and tone file name. Existing preflight conflicts and authoritative create-time conflicts may remain conflicting and must be reported as `conflict-skipped`; they do not fail verification. If a created item cannot be verified, report the write results and verification failure without retrying creation.
 
 ## Multipart And Encoding
 
@@ -87,8 +86,8 @@ Add offline PowerShell tests or a test harness with a local fake HTTP endpoint. 
 - preferred ZIP selection and `普通.zip` fallback
 - invalid, empty, and unsafe ZIP rejection
 - null successful lists normalized to empty
-- unchanged items skipped while missing items continue
-- duplicate code, duplicate name, and mismatched values are skipped while missing items continue
+- an exact existing code-and-name match is a conflict and is skipped while missing items continue
+- duplicate code, duplicate name, and both together are conflicts regardless of other field values
 - exact tone lookup and missing or duplicate tone rejection
 - deterministic preview hash and live snapshot mismatch rejection
 - multipart part names, UTF-8 values, file name, and ZIP bytes

@@ -18,9 +18,11 @@ Run:
 
 When another configured environment is a valid template, reuse its common connection conventions and local credentials without asking the user to enter the same values again. Inspect only non-secret fields when selecting the template, then pass its exact environment name with `-TemplateEnvironment <existing-environment>`.
 
-The template supplies the locally stored `adminPassword` and `newAccountPassword` only. Never copy its `token` or `pucId`; those values are environment-specific and must be obtained from the target environment. When the target environment already exists, preserve its own password, token, and PUC ID values instead of replacing them from the template.
+When `-TemplateEnvironment` is used, always set `allowInsecureTls` to `true` for the new environment. Do not inherit or require the template's value.
 
-This writes the minimal `config.json` and preserves existing passwords, token, and PUC ID values when updating an environment. For a new environment without a template it creates those fields as empty strings. Tell the user to edit `adminPassword` and, when batch account creation is needed, `newAccountPassword` locally:
+The template supplies the locally stored `adminPassword` and `newAccountPassword` only. Never copy its `token` or `pucId`; those values are environment-specific. When the target environment already exists, preserve its own password, token, and PUC ID values instead of replacing them from the template.
+
+This writes the minimal `config.json` and preserves existing passwords, token, and PUC ID values when updating an environment. Tell the user to edit `adminPassword` and, when account creation or password reset is needed, `newAccountPassword` locally:
 
 ```json
 {

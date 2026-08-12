@@ -1,6 +1,6 @@
 ---
 name: puc-config
-description: Configure a named PUC environment through its configuration API, including reusable captcha login, saved-token validation, account creation and updates, batch personnel creation, configuration and License import/export, permission menu import, and platform function switches. Use when Codex needs to authenticate to a PUC configuration tool, preview or create dispatcher accounts, safely update an existing account's editable information, preview or create address-book personnel, export or import PUC configuration or License files, upload a user-specified permission menu JSON file, configure duplicate-login forced logout, or extend the PUC configuration workflow with another reference module.
+description: Configure a named PUC environment through its configuration API, including reusable captcha login, saved-token validation, account creation, account information updates, single or batch dispatcher account password reset or password change, batch personnel creation, configuration and License import/export, permission menu import, and platform function switches. Use when Codex needs to authenticate to a PUC configuration tool; preview or create dispatcher accounts; reset, change, modify, or update one or many accounts' passwords; safely update an existing account's other editable information; preview or create address-book personnel; export or import PUC configuration or License files; upload a permission menu JSON file; configure duplicate-login forced logout; or extend the PUC configuration workflow with another reference module.
 ---
 
 # PUC Config
@@ -24,6 +24,7 @@ If `config.json` is missing, run `scripts/Initialize-PucConfig.ps1` with the env
 
 - Authentication, captcha, saved-token status, or environment setup: read `references/login.md`.
 - Batch dispatcher accounts: read `references/batch-accounts.md` and `references/login.md`.
+- Single or batch dispatcher account password reset/change/update: read `references/reset-account-password.md` and `references/login.md`. Route every request whose intended changed value is one or more account passwords here, including requests such as "reset all mhw accounts", even when the user says "update account password" or mentions `update_account`; do not route it to general account information updates.
 - Existing dispatcher account updates: read `references/update-account.md` and `references/login.md`.
 - Batch address-book personnel: read `references/batch-personnel.md` and `references/login.md`.
 - Configuration import or export: read `references/config-import-export.md` and `references/login.md`.
@@ -35,6 +36,10 @@ Read only the selected child reference. A new capability belongs in a new `refer
 
 ## Safety boundaries
 
+- Use the top-level `result` as the authoritative API outcome for every PUC interface. When `result` is numerically or textually equal to `0`, treat the interface call as successful even when any other returned field is `null`, missing, or empty. Never convert a successful `result == 0` response into an API error merely because a partial data field is empty.
+- Normalize successful empty data for the consuming workflow: treat a null list as an empty collection, a null scalar as an empty or unavailable value, and a null object as no returned record. Report outcomes such as "no data", "no match", or "successful response with empty <field>" as appropriate; do not report them as interface exceptions.
+- If a later step requires a field that is empty in a successful response, do not fabricate a value or continue unsafely. Stop or skip that dependent step and state that the interface succeeded but the required data was empty. This is a workflow data condition, not an API failure.
+- Treat a response as an API failure only when `result` is present and not equal to `0`, the request has a transport/HTTP failure, the response cannot be decoded, or no response document is returned. A missing `result` is an invalid/unknown response contract, not evidence that a null business field caused failure.
 - Serialize every JSON request exactly once with `ConvertTo-PucJsonBytes`, which converts non-ASCII values to standard JSON `\uXXXX` escapes and then returns UTF-8 bytes. Send those bytes as `application/json; charset=utf-8`. Never pass a JSON string directly to `Invoke-RestMethod`; Windows PowerShell 5 or a legacy server can otherwise replace or misdecode non-ASCII parameter values.
 - Pass every JSON response through `ConvertFrom-PucResponseEncoding` before reading fields or checking duplicates. This safely reverses UTF-8 response bytes that Windows PowerShell 5 decoded as Latin-1 while leaving already-correct Unicode, ASCII, and invalid conversion candidates unchanged.
 - Resolve one exact environment before any network call.

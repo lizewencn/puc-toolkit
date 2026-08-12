@@ -1,6 +1,6 @@
 # Update account information
 
-Use `scripts/Invoke-PucAccountUpdate.ps1`. This workflow follows the account edit behavior in the PUC frontend, not the password-reset behavior.
+Use `scripts/Invoke-PucAccountUpdate.ps1`. This workflow follows the account edit behavior in the PUC frontend. For any request to reset, change, modify, or update an account password, stop and use `reset-account-password.md` instead.
 
 ## Inputs and modes
 
@@ -48,7 +48,7 @@ Require `role` and `role_guid` together. Require `org_identifier` and `org_alias
 
 The frontend saves `mfa_switch` and `email` with a separate `mfa_dispatcher_info_config_update` request. Accept those two change fields and send that request only when either is explicitly requested. Report partial success if `update_account` succeeds and the MFA request fails; never retry either write.
 
-Reject identity, password, and server-state fields, including `dispatcher_account`, `guid`, `puc_id`, `realm`, `dispatcher_pwd`, `is_change_pwd`, timestamps, version fields, online/lock/account/approval state, `judge_sync_edit`, and `disabled`. Password reset is a distinct frontend workflow and does not belong in this child skill.
+Reject identity, password, and server-state fields, including `dispatcher_account`, `guid`, `puc_id`, `realm`, `dispatcher_pwd`, `is_change_pwd`, timestamps, version fields, online/lock/account/approval state, `judge_sync_edit`, and `disabled`. Route password changes to `reset-account-password.md`; that child workflow uses the same `update_account` command with password-reset semantics.
 
 ## Protocol consistency
 

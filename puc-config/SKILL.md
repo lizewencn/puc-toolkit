@@ -1,6 +1,6 @@
 ---
 name: puc-config
-description: Configure a named PUC environment through its configuration API, including reusable captcha login, saved-token validation, account creation, account information updates, single or batch dispatcher account password reset or password change, batch personnel creation, configuration and License import/export, permission menu import, and platform function switches. Use when Codex needs to authenticate to a PUC configuration tool; preview or create dispatcher accounts; reset, change, modify, or update one or many accounts' passwords; safely update an existing account's other editable information; preview or create address-book personnel; export or import PUC configuration or License files; upload a permission menu JSON file; configure duplicate-login forced logout; or extend the PUC configuration workflow with another reference module.
+description: Configure a named PUC environment through its configuration API, including reusable captcha login, accounts, personnel, incident alarm levels, configuration and License transfer, permission menus, and platform switches. Use when Codex needs to authenticate to a PUC configuration tool; manage dispatcher accounts or passwords; manage address-book personnel; configure or add police incident alarm levels; transfer configuration or License files; import permission menus; or configure duplicate-login forced logout.
 ---
 
 # PUC Config
@@ -9,7 +9,7 @@ Use this skill as the single PUC configuration entry point. Keep workflow-specif
 
 ## Local state
 
-Use `Desktop\agentSkillLocalConfig\puc-config` by default:
+Use `F:\puc-word\agentSkillLocalConfig` as the configuration base directory and `F:\puc-word\agentSkillLocalConfig\puc-config` as this skill's local state directory by default. Pass `-ConfigRoot` only when the user explicitly selects another state directory:
 
 - `config.json`: user-owned environment settings, plaintext administrator and new-account passwords, saved token, and PUC ID. Treat this file as sensitive.
 - `runtime.json`: pending same-process login worker metadata only; never store captcha IDs, Cookies, or plaintext captcha values.
@@ -27,6 +27,7 @@ If `config.json` is missing, run `scripts/Initialize-PucConfig.ps1` with the env
 - Single or batch dispatcher account password reset/change/update: read `references/reset-account-password.md` and `references/login.md`. Route every request whose intended changed value is one or more account passwords here, including requests such as "reset all mhw accounts", even when the user says "update account password" or mentions `update_account`; do not route it to general account information updates.
 - Existing dispatcher account updates: read `references/update-account.md` and `references/login.md`.
 - Batch address-book personnel: read `references/batch-personnel.md` and `references/login.md`.
+- Fixed police incident alarm-level configuration: read `references/incident-alarm-levels.md` and `references/login.md`.
 - Configuration import or export: read `references/config-import-export.md` and `references/login.md`.
 - Standalone License import or export: read `references/license.md` and `references/login.md`.
 - Permission menu import: read `references/permission-menu-import.md` and `references/login.md`.

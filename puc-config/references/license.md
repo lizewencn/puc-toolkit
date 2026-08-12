@@ -12,7 +12,7 @@ Run:
   -Environment <environment>
 ```
 
-The script sends `license_download` with the environment realm, requires `result: 0`, and downloads the returned `/frs/licensedownload/` file using the returned Bearer token. It stores the non-empty `.enc` file under `Desktop\agentSkillLocalConfig\puc-config\configExport\<environment>` using the existing unique file-name format. For example, environment `30_93` exports to `configExport\30_93`. When `OutputDirectory` is provided, treat it as the export root and still append the environment directory.
+The script sends `license_download` with the environment realm, requires `result: 0`, and downloads the returned `/frs/licensedownload/` file using the returned Bearer token. It stores the non-empty `.enc` file under `F:\puc-word\agentSkillLocalConfig\puc-config\configExport\<environment>` using the existing unique file-name format. For example, environment `30_93` exports to `configExport\30_93`. When `OutputDirectory` is provided, treat it as the export root and still append the environment directory.
 
 Normal configuration export also performs this License export automatically. Report both output paths, byte sizes, and SHA-256 hashes. Never print the download token or License contents.
 

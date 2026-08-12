@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Stop'
 function Get-PucConfigRoot {
     param([string]$ConfigRoot)
     if (-not [string]::IsNullOrWhiteSpace($ConfigRoot)) { return [IO.Path]::GetFullPath($ConfigRoot) }
-    return Join-Path ([Environment]::GetFolderPath('Desktop')) 'agentSkillLocalConfig\puc-config'
+    return 'F:\puc-word\agentSkillLocalConfig\puc-config'
 }
 
 function Read-PucJson {

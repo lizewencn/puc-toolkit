@@ -12,7 +12,7 @@ Run:
   -Environment <environment>
 ```
 
-The script sends `export_request`, polls `export_progress` every five seconds, and downloads the completed file with the returned Bearer token. It then sends `license_download` and downloads the returned License with its separate Bearer token. It stores both the configuration JSON and License `.enc` under `Desktop\agentSkillLocalConfig\puc-config\configExport\<environment>`. Sanitize only the directory component when necessary; keep the existing generated file-name formats unchanged so prior exports are not overwritten. For example, environment `30_93` exports to `configExport\30_93`.
+The script sends `export_request`, polls `export_progress` every five seconds, and downloads the completed file with the returned Bearer token. It then sends `license_download` and downloads the returned License with its separate Bearer token. It stores both the configuration JSON and License `.enc` under `F:\puc-word\agentSkillLocalConfig\puc-config\configExport\<environment>`. Sanitize only the directory component when necessary; keep the existing generated file-name formats unchanged so prior exports are not overwritten. For example, environment `30_93` exports to `configExport\30_93`.
 
 Treat exported files as sensitive. Report the environment, task ID, both final paths, file sizes, and SHA-256 hashes. Never print either download token or file contents. If the configuration succeeds but License export fails, report the preserved configuration path and the sanitized License failure; do not claim the combined export succeeded.
 

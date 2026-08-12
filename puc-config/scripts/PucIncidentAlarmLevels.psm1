@@ -15,7 +15,7 @@ function Get-PucIncidentAlarmLevelDefinitions {
     return @(
         [pscustomobject]@{Code='00';Name=$star;Description=$star+$suffix;Color='#E56659';Tone='CriticalAlarm.wav'},
         [pscustomobject]@{Code='01';Name=$yellow;Description=$yellow+$suffix;Color='#eba54d';Tone='MediumAlarm.wav'},
-        [pscustomobject]@{Code='02';Name=$normal;Description=$normal+$suffix;Color='#eba54d';Tone='MediumAlarm.wav'},
+        [pscustomobject]@{Code='02';Name=$normal;Description=$normal+$suffix;Color='#73cb6d';Tone='MediumAlarm.wav'},
         [pscustomobject]@{Code='03';Name=$warning;Description=$warning+$suffix;Color='#73cb6d';Tone='CommonlyAlarm.wav'},
         [pscustomobject]@{Code='04';Name=$instruction;Description=$instruction+$suffix;Color='#73cb6d';Tone='CommonlyAlarm.wav'}
     )
@@ -95,22 +95,8 @@ function New-PucIncidentAlarmLevelPreview {
         $nameMatches = @($levels | Where-Object { [string](Get-PucIncidentProperty $_ 'level_name' '') -ceq [string]$target.Name })
         $classification = 'missing'
         $reason = ''
-        if ($codeMatches.Count -gt 1 -or $nameMatches.Count -gt 1) {
-            $classification = 'conflict'; $reason = 'duplicate-code-or-name'
-        } elseif ($codeMatches.Count -eq 0 -and $nameMatches.Count -eq 0) {
-            $classification = 'missing'
-        } elseif ($codeMatches.Count -eq 1 -and $nameMatches.Count -eq 1 -and [object]::ReferenceEquals($codeMatches[0],$nameMatches[0])) {
-            $record = $codeMatches[0]
-            $toneInfo = Get-PucIncidentProperty $record 'toneInfo' $null
-            $matchesTarget =
-                ([string](Get-PucIncidentProperty $record 'level_desc' '') -ceq [string]$target.Description) -and
-                ([string](Get-PucIncidentProperty $record 'icon_color' '').ToUpperInvariant() -ceq [string]$target.Color.ToUpperInvariant()) -and
-                ([string](Get-PucIncidentProperty $record 'icon_zip_name' '') -ceq [string]$target.ZipFileName) -and
-                ([string](Get-PucIncidentProperty $toneInfo 'file_name' '') -ceq [string]$target.Tone)
-            if ($matchesTarget) { $classification = 'unchanged' }
-            else { $classification = 'conflict'; $reason = 'existing-values-differ' }
-        } else {
-            $classification = 'conflict'; $reason = 'code-or-name-owned-by-another-record'
+        if ($codeMatches.Count -gt 0 -or $nameMatches.Count -gt 0) {
+            $classification = 'conflict'; $reason = 'existing-code-or-name'
         }
         [pscustomobject]@{
             Code=[string]$target.Code;Name=[string]$target.Name;Description=[string]$target.Description

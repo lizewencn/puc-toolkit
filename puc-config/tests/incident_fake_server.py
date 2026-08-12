@@ -5,7 +5,16 @@ from email.policy import default
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
-levels = []
+levels = [
+    {
+        "level_code": "00",
+        "level_name": "existing-conflict",
+        "level_desc": "existing",
+        "icon_color": "#000000",
+        "icon_zip_name": "existing.zip",
+        "toneInfo": {"file_name": "CriticalAlarm.wav"},
+    }
+]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -33,16 +42,18 @@ class Handler(BaseHTTPRequestHandler):
             for part in message.iter_parts():
                 name = part.get_param("name", header="content-disposition")
                 form[name] = (part.get_payload(decode=True) or b"").decode("utf-8", "replace")
-            levels.append(
-                {
-                    "level_code": form.get("level_code"),
-                    "level_name": form.get("level_name"),
-                    "level_desc": form.get("level_desc"),
-                    "icon_color": form.get("icon_color"),
-                    "icon_zip_name": form.get("icon_zip_name"),
-                    "toneInfo": {"file_name": form.get("tone_id")},
-                }
-            )
+            level = {
+                "level_code": form.get("level_code"),
+                "level_name": form.get("level_name"),
+                "level_desc": form.get("level_desc"),
+                "icon_color": form.get("icon_color"),
+                "icon_zip_name": form.get("icon_zip_name"),
+                "toneInfo": {"file_name": form.get("tone_id")},
+            }
+            levels.append(level)
+            if level["level_code"] == "02":
+                self.send_json({"result": 4099, "msg": "duplicate alarm level identity"})
+                return
             self.send_json({"result": 0, "code": 0, "msg": ""})
             return
         length = int(self.headers.get("Content-Length", "0"))

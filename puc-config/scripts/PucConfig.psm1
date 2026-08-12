@@ -1,10 +1,27 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+function Get-PucDefaultConfigRoot {
+    return Join-Path ([Environment]::GetFolderPath('Desktop')) 'agentSkillLocalConfig\puc-config'
+}
+
+function Get-PucSettingsPath {
+    $localAppData = [Environment]::GetFolderPath('LocalApplicationData')
+    if ([string]::IsNullOrWhiteSpace($localAppData)) { throw 'Windows LocalApplicationData is unavailable.' }
+    return Join-Path $localAppData 'puc-config\setting.json'
+}
+
 function Get-PucConfigRoot {
     param([string]$ConfigRoot)
     if (-not [string]::IsNullOrWhiteSpace($ConfigRoot)) { return [IO.Path]::GetFullPath($ConfigRoot) }
-    return 'F:\puc-word\agentSkillLocalConfig\puc-config'
+
+    $settingsPath = Get-PucSettingsPath
+    $settings = Read-PucJson -Path $settingsPath -Default $null
+    if ($null -eq $settings -or [string]::IsNullOrWhiteSpace([string]$settings.configRoot)) {
+        $defaultRoot = Get-PucDefaultConfigRoot
+        throw "PUC config path is empty in '$settingsPath'. Confirm whether to use the default path '$defaultRoot' or choose another path, then run Set-PucConfigRoot.ps1."
+    }
+    return [IO.Path]::GetFullPath([string]$settings.configRoot)
 }
 
 function Read-PucJson {
@@ -142,4 +159,4 @@ function Get-PucPropertyPath {
     return $current
 }
 
-Export-ModuleMember -Function Get-PucConfigRoot,Read-PucJson,Write-PucJson,Get-PucEnvironment,Get-PucEntry,Set-PucEntry,Protect-PucString,Unprotect-PucString,ConvertTo-PucJsonBytes,ConvertFrom-PucResponseEncoding,ConvertTo-PucDesHex,Get-PucRuntimeEntry,Set-PucRuntimeEntry,Get-PucPropertyPath
+Export-ModuleMember -Function Get-PucDefaultConfigRoot,Get-PucSettingsPath,Get-PucConfigRoot,Read-PucJson,Write-PucJson,Get-PucEnvironment,Get-PucEntry,Set-PucEntry,Protect-PucString,Unprotect-PucString,ConvertTo-PucJsonBytes,ConvertFrom-PucResponseEncoding,ConvertTo-PucDesHex,Get-PucRuntimeEntry,Set-PucRuntimeEntry,Get-PucPropertyPath

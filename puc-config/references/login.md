@@ -4,6 +4,21 @@ Use this workflow for environment initialization, password setup, saved-token va
 
 ## Initialize an environment
 
+Before any initialization or authentication command, run:
+
+```powershell
+& <skill>\scripts\Set-PucConfigRoot.ps1 -Status
+```
+
+The path selection is stored outside the Skill package in `%LOCALAPPDATA%\puc-config\setting.json`, which contains only `configRoot` and survives Skill updates. When the status is `first-use-required`, show the returned `defaultConfigRoot` and ask whether to use it or select another absolute path. Persist the answer with exactly one of:
+
+```powershell
+& <skill>\scripts\Set-PucConfigRoot.ps1 -UseDefault
+& <skill>\scripts\Set-PucConfigRoot.ps1 -Path <absolute-path>
+```
+
+Do not continue until a path is selected. Do not move existing files when the pointer changes. An explicitly supplied `-ConfigRoot` remains a temporary per-command override and does not change the saved pointer.
+
 Collect the environment name, configuration-tool base URL, realm, administrator account, and whether self-signed TLS is allowed. Do not collect the password through chat.
 
 Run:

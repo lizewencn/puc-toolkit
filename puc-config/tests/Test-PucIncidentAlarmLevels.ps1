@@ -27,7 +27,7 @@ function Test-Definitions {
     $expected = @(
         @('00',$star,'#E56659','CriticalAlarm.wav'),
         @('01',$yellow,'#eba54d','MediumAlarm.wav'),
-        @('02',$normal,'#eba54d','MediumAlarm.wav'),
+        @('02',$normal,'#73cb6d','MediumAlarm.wav'),
         @('03',$warning,'#73cb6d','CommonlyAlarm.wav'),
         @('04',$instruction,'#73cb6d','CommonlyAlarm.wav')
     )
@@ -97,11 +97,14 @@ function Test-Preview {
     Assert-Equal (New-PucIncidentAlarmLevelPreview -Environment 'test' -Assets $assets -Tones $tones -ExistingLevels $null).PreviewHash $missing.PreviewHash 'Preview hash stability'
     $existing=@($assets|ForEach-Object{[pscustomobject]@{level_code=$_.Code;level_name=$_.Name;level_desc=$_.Description;icon_color=$_.Color.ToUpperInvariant();icon_zip_name=$_.ZipFileName;toneInfo=[pscustomobject]@{file_name=$_.Tone}}})
     $same=New-PucIncidentAlarmLevelPreview -Environment 'test' -Assets $assets -Tones $tones -ExistingLevels $existing
-    Assert-Equal $same.PlannedWrites 0 'Unchanged writes'
-    Assert-Equal @($same.Items|Where-Object Classification -eq 'unchanged').Count 5 'Unchanged count'
-    $existing[0].icon_color='#000000'
-    $conflict=New-PucIncidentAlarmLevelPreview -Environment 'test' -Assets $assets -Tones $tones -ExistingLevels $existing
-    Assert-True $conflict.HasConflict 'Changed color must conflict'
+    Assert-Equal $same.PlannedWrites 0 'Exact identity match writes'
+    Assert-Equal @($same.Items|Where-Object Classification -eq 'conflict').Count 5 'Exact identity matches must conflict'
+    $codeOnly=New-PucIncidentAlarmLevelPreview -Environment 'test' -Assets $assets -Tones $tones -ExistingLevels @([pscustomobject]@{level_code=$assets[0].Code;level_name='different-name'})
+    Assert-Equal $codeOnly.Items[0].Classification 'conflict' 'Equal code must conflict'
+    Assert-Equal $codeOnly.PlannedWrites 4 'Equal code must not block other writes'
+    $nameOnly=New-PucIncidentAlarmLevelPreview -Environment 'test' -Assets $assets -Tones $tones -ExistingLevels @([pscustomobject]@{level_code='different-code';level_name=$assets[1].Name})
+    Assert-Equal $nameOnly.Items[1].Classification 'conflict' 'Equal name must conflict'
+    Assert-Equal $nameOnly.PlannedWrites 4 'Equal name must not block other writes'
     Assert-Throws { New-PucIncidentAlarmLevelPreview -Environment test -Assets $assets -Tones @($tones+$tones[0]) -ExistingLevels @() } 'exactly one'
 }
 
@@ -127,7 +130,7 @@ function Test-SkillRouting {
     Assert-True ($skill -match 'incident-alarm-levels\.md') 'SKILL route is missing'
     Assert-True (Test-Path -LiteralPath $referencePath) 'Incident workflow reference is missing'
     $reference=Get-Content -Raw -LiteralPath $referencePath
-    foreach($term in @('DryRun','ExpectedPreviewHash','unchanged','conflict','partial','No retry')){Assert-True ($reference -match [regex]::Escape($term)) "Reference is missing '$term'"}
+    foreach($term in @('DryRun','ExpectedPreviewHash','same level code','same level name','conflict-skipped','continue','partial','No retry')){Assert-True ($reference -match [regex]::Escape($term)) "Reference is missing '$term'"}
 }
 
 function Test-LiveFlow {
@@ -146,13 +149,15 @@ function Test-LiveFlow {
         try {
             $previewText=& $commandPath -Environment fake -DryRun -ConfigRoot $configRoot -EndpointOverride "http://127.0.0.1:$port/confs"
             $preview=$previewText|ConvertFrom-Json
-            Assert-Equal $preview.PlannedWrites 5 'Fake preview writes'
+            Assert-Equal $preview.PlannedWrites 4 'Fake preview writes'
+            Assert-Equal $preview.Items[0].Classification 'conflict' 'Preflight code conflict'
             $liveText=& $commandPath -Environment fake -Live -ConfirmLive -ExpectedPreviewHash $preview.PreviewHash -ConfigRoot $configRoot -EndpointOverride "http://127.0.0.1:$port/confs"
             $live=$liveText|ConvertFrom-Json
             Assert-Equal $live.status 'configured' 'Live status'
-            Assert-Equal $live.writesUsed 5 'Live write count'
+            Assert-Equal $live.writesUsed 3 'Live write count'
             Assert-True $live.verified 'Live verification'
-            Assert-Equal (($live.results|ForEach-Object code)-join ',') '00,01,02,03,04' 'Write order'
+            Assert-Equal (($live.results|Where-Object status -eq 'conflict-skipped'|ForEach-Object code)-join ',') '00,02' 'Conflict skips'
+            Assert-Equal (($live.results|Where-Object status -eq 'created'|ForEach-Object code)-join ',') '01,03,04' 'Continued write order'
         } finally {[Environment]::SetEnvironmentVariable('PUC_CONFIG_TEST_MODE',$old)}
     } finally {
         if($null-ne$server-and-not$server.HasExited){Stop-Process -Id $server.Id -Force}

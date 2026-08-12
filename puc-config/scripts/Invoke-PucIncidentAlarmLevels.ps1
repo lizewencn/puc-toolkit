@@ -18,7 +18,6 @@ if (-not [string]::IsNullOrWhiteSpace($EndpointOverride) -and [Environment]::Get
 
 Import-Module (Join-Path $PSScriptRoot 'PucConfig.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'PucIncidentAlarmLevels.psm1') -Force
-$root = Get-PucConfigRoot $ConfigRoot
 $assetDirectory = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\assets\incident'))
 
 if ($PlanOnly) {
@@ -31,6 +30,7 @@ if ($PlanOnly) {
     return
 }
 
+$root = Get-PucConfigRoot $ConfigRoot
 $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
 if ([string]::IsNullOrWhiteSpace($EndpointOverride)) {
     $validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Validate -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
@@ -151,18 +151,28 @@ function Invoke-CreateLevel($Item) {
 try {
     $preview=New-CurrentPreview
     if($DryRun){$preview|ConvertTo-Json -Depth 12 -Compress;return}
-    if($preview.HasConflict){throw "Incident alarm-level preflight found conflicts. No writes were attempted. previewHash=$($preview.PreviewHash)"}
     if(-not[string]::Equals($preview.PreviewHash,$ExpectedPreviewHash,[StringComparison]::OrdinalIgnoreCase)){throw 'Incident alarm-level state or assets changed after preview. Run DryRun again before configuring.'}
     $results=[Collections.Generic.List[object]]::new();$failed=$false
     foreach($item in $preview.Items){
-        if($item.Classification-eq'unchanged'){$results.Add([pscustomobject]@{code=$item.Code;name=$item.Name;status='unchanged';reason='' });continue}
+        if($item.Classification-eq'conflict'){$results.Add([pscustomobject]@{code=$item.Code;name=$item.Name;status='conflict-skipped';reason=$item.Reason});continue}
         if($failed){$results.Add([pscustomobject]@{code=$item.Code;name=$item.Name;status='not-attempted';reason='earlier-write-failed'});continue}
         try{$response=Invoke-CreateLevel $item;$results.Add([pscustomobject]@{code=$item.Code;name=$item.Name;status='created';result=[string]$response.result;reason=''})}
-        catch{$failed=$true;$results.Add([pscustomobject]@{code=$item.Code;name=$item.Name;status='failed';reason=$_.Exception.Message})}
+        catch{
+            $createError=$_.Exception.Message;$isConflict=$false
+            try{$isConflict=@(Get-AllLevels|Where-Object { [string](Get-ResponseProperty $_ 'level_code' '') -ceq $item.Code -or [string](Get-ResponseProperty $_ 'level_name' '') -ceq $item.Name }).Count-gt 0}catch{$isConflict=$false}
+            if($isConflict){$results.Add([pscustomobject]@{code=$item.Code;name=$item.Name;status='conflict-skipped';reason='create-time-code-or-name-conflict'})}
+            else{$failed=$true;$results.Add([pscustomobject]@{code=$item.Code;name=$item.Name;status='failed';reason=$createError})}
+        }
     }
     if($failed){[pscustomobject]@{status='partial-failure';action='ConfigureIncidentAlarmLevels';environment=$Environment;previewHash=$preview.PreviewHash;results=@($results);verified=$false}|ConvertTo-Json -Depth 12 -Compress;exit 1}
-    $verified=New-CurrentPreview
-    if($verified.HasConflict-or$verified.PlannedWrites-ne 0){throw 'All writes succeeded, but final incident alarm-level verification did not match the fixed configuration. No retry was attempted.'}
+    $levels=@(Get-AllLevels)
+    foreach($result in @($results|Where-Object status -eq 'created')){
+        $target=@($preview.Items|Where-Object Code -ceq $result.code)|Select-Object -First 1
+        $matches=@($levels|Where-Object { [string](Get-ResponseProperty $_ 'level_code' '') -ceq $target.Code -and [string](Get-ResponseProperty $_ 'level_name' '') -ceq $target.Name })
+        if($matches.Count-ne 1){throw 'Created incident alarm level was not found during final verification. No retry was attempted.'}
+        $record=$matches[0];$toneInfo=Get-ResponseProperty $record 'toneInfo' $null
+        if([string](Get-ResponseProperty $record 'level_desc' '') -cne $target.Description -or [string](Get-ResponseProperty $record 'icon_color' '').ToUpperInvariant() -cne $target.Color.ToUpperInvariant() -or [string](Get-ResponseProperty $record 'icon_zip_name' '') -cne $target.ZipFileName -or [string](Get-ResponseProperty $toneInfo 'file_name' '') -cne $target.Tone){throw 'Created incident alarm level did not match the fixed configuration during final verification. No retry was attempted.'}
+    }
     [pscustomobject]@{status='configured';action='ConfigureIncidentAlarmLevels';environment=$Environment;previewHash=$preview.PreviewHash;results=@($results);writesUsed=@($results|Where-Object status -eq 'created').Count;verified=$true}|ConvertTo-Json -Depth 12 -Compress
 } finally {
     $client.Dispose();$handler.Dispose()

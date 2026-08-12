@@ -1,6 +1,6 @@
 ---
 name: puc-config
-description: Configure a named PUC environment through its configuration API, including reusable captcha login, accounts, personnel, incident alarm levels, configuration and License transfer, permission menus, and platform switches. Use when Codex needs to authenticate to a PUC configuration tool; manage dispatcher accounts or passwords; manage address-book personnel; configure or add police incident alarm levels; transfer configuration or License files; import permission menus; or configure duplicate-login forced logout.
+description: Configure a named PUC environment through its configuration API, including reusable captcha login, saved-token validation, account creation, account information updates, single or batch dispatcher account password reset or password change, batch personnel creation, configuration and License import/export, permission menu import, and platform function switches. Use when Codex needs to authenticate to a PUC configuration tool; preview or create dispatcher accounts; reset, change, modify, or update one or many accounts' passwords; safely update an existing account's other editable information; preview or create address-book personnel; export or import PUC configuration or License files; upload a permission menu JSON file; configure duplicate-login forced logout; or extend the PUC configuration workflow with another reference module.
 ---
 
 # PUC Config
@@ -9,7 +9,17 @@ Use this skill as the single PUC configuration entry point. Keep workflow-specif
 
 ## Local state
 
-Use `F:\puc-word\agentSkillLocalConfig` as the configuration base directory and `F:\puc-word\agentSkillLocalConfig\puc-config` as this skill's local state directory by default. Pass `-ConfigRoot` only when the user explicitly selects another state directory:
+Before the first operation for a Windows user, run `scripts/Set-PucConfigRoot.ps1 -Status`. If it returns `first-use-required`, show the resolved default path `Desktop\agentSkillLocalConfig\puc-config` and ask whether the user wants to keep it or choose another absolute path. Do not run environment initialization, authentication, reads, or writes until the user answers.
+
+- If the user accepts the default, run `scripts/Set-PucConfigRoot.ps1 -UseDefault`.
+- If the user supplies another path, run `scripts/Set-PucConfigRoot.ps1 -Path <absolute-path>`.
+- If the user's request already explicitly specifies the desired configuration root, treat that as the answer and persist it with `-Path` without asking again.
+
+Store only `configRoot` in `%LOCALAPPDATA%\puc-config\setting.json`. Do not include this runtime file in the Skill package, so installing or updating the Skill cannot overwrite the user's path choice. Resolve configuration roots in this order: an explicit script `-ConfigRoot` temporary override, the non-empty `setting.json` value, then no implicit selection. A missing file or an empty/missing `configRoot` is a first-use condition and must trigger the prompt; do not silently choose the default. When the user accepts the default, write the current user's resolved desktop path into `configRoot`. Changing this value affects future operations only and must never move, copy, delete, merge, or overwrite configuration files from the previous root.
+
+Every workflow script must resolve its configuration directory through `Get-PucConfigRoot`; do not independently construct a desktop path or read `config.json` from a hard-coded location. This makes all authentication, account, personnel, import/export, License, permission, and password-reset operations read from the root selected in `%LOCALAPPDATA%\puc-config\setting.json` unless an explicit one-command `-ConfigRoot` override is supplied.
+
+The suggested default is the current user's `Desktop\agentSkillLocalConfig\puc-config`:
 
 - `config.json`: user-owned environment settings, plaintext administrator and new-account passwords, saved token, and PUC ID. Treat this file as sensitive.
 - `runtime.json`: pending same-process login worker metadata only; never store captcha IDs, Cookies, or plaintext captcha values.
@@ -18,7 +28,7 @@ Keep only the empty `assets/config.template.json` in the Skill package or source
 
 Never ask the user to paste a password, token, captcha value, captcha ID, or Cookie into chat. Never print credentials or protected values. Treat config and runtime state as sensitive. Require users to edit plaintext passwords only in their local `config.json`.
 
-If `config.json` is missing, run `scripts/Initialize-PucConfig.ps1` with the environment name, base URL, realm, and administrator account. The script creates empty `adminPassword`, `newAccountPassword`, `token`, and `pucId` fields.
+After the path selection is saved, if `config.json` is missing at the selected root, run `scripts/Initialize-PucConfig.ps1` with the environment name, base URL, realm, and administrator account. The script creates empty `adminPassword`, `newAccountPassword`, `token`, and `pucId` fields.
 
 ## Route the request
 

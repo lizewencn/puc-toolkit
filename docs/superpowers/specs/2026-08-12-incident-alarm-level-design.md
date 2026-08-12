@@ -10,7 +10,7 @@ Extend `puc-config` so a request to configure incident alarm levels prepares and
 |---|---|---|---|---|---|
 | `00` | `星标` | `#E56659` | `星标.zip` | `普通.zip` | `CriticalAlarm.wav` |
 | `01` | `黄标` | `#eba54d` | `黄标.zip` | `普通.zip` | `MediumAlarm.wav` |
-| `02` | `普通` | `#eba54d` | `普通.zip` | `普通.zip` | `MediumAlarm.wav` |
+| `02` | `普通` | `#73cb6d` | `普通.zip` | `普通.zip` | `MediumAlarm.wav` |
 | `03` | `预警` | `#73cb6d` | `预警.zip` | `普通.zip` | `CommonlyAlarm.wav` |
 | `04` | `指令` | `#73cb6d` | `指令.zip` | `普通.zip` | `CommonlyAlarm.wav` |
 

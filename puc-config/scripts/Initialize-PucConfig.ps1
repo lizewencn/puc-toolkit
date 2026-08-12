@@ -42,7 +42,7 @@ $entry = [ordered]@{
     newAccountPassword = Get-LocalValue 'newAccountPassword'
     token = if ($null -ne $previous -and $null -ne $previous.PSObject.Properties['token']) { [string]$previous.token } else { '' }
     pucId = if ($null -ne $previous -and $null -ne $previous.PSObject.Properties['pucId']) { [string]$previous.pucId } else { '' }
-    allowInsecureTls = [bool]$AllowInsecureTls
+    allowInsecureTls = if ($null -ne $template) { $true } else { [bool]$AllowInsecureTls }
 }
 Write-PucJson -Path $configPath -Value (Set-PucEntry -Document $existing -Name $Name -Entry $entry)
 New-Item -ItemType Directory -Force -Path (Join-Path $root 'reports') | Out-Null

@@ -1,0 +1,136 @@
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)][string]$Environment,
+    [Parameter(Mandatory)][string]$Account,
+    [switch]$PlanOnly,
+    [switch]$DryRun,
+    [switch]$Live,
+    [switch]$ConfirmLive,
+    [string]$ExpectedSnapshotHash,
+    [string]$ConfigRoot
+)
+
+$ErrorActionPreference = 'Stop'
+if (@($PlanOnly,$DryRun,$Live | Where-Object { $_ }).Count -ne 1) { throw 'Select exactly one mode: PlanOnly, DryRun, or Live.' }
+if ([string]::IsNullOrWhiteSpace($Account)) { throw 'Account must not be empty.' }
+if ($Live -and -not $ConfirmLive) { throw 'Live password reset requires ConfirmLive after explicit confirmation.' }
+if ($Live -and [string]::IsNullOrWhiteSpace($ExpectedSnapshotHash)) { throw 'Live password reset requires ExpectedSnapshotHash from the authenticated dry run.' }
+
+Import-Module (Join-Path $PSScriptRoot 'PucConfig.psm1') -Force
+$root = Get-PucConfigRoot $ConfigRoot
+
+if ($PlanOnly) {
+    [pscustomobject]@{ status='planned-offline'; action='ResetAccountPassword'; environment=$Environment; account=$Account; networkUsed=$false; passwordCollected=$false; plannedWrites=2 } |
+        ConvertTo-Json -Compress
+    return
+}
+
+$environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
+$validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Validate -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
+if ($validation.valid -ne $true) { throw "Saved token is not usable ($($validation.reason)). Complete the login workflow first." }
+$environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
+$baseUri = [uri]$environmentConfig.baseUrl
+$oldCallback = [Net.ServicePointManager]::ServerCertificateValidationCallback
+$callbackChanged = $false
+if ($environmentConfig.allowInsecureTls -eq $true -and -not (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
+    [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+    $callbackChanged = $true
+}
+
+function Get-PropertyValue($Object, [string]$Name, $Default = $null) {
+    $property = @($Object.PSObject.Properties.Match($Name)) | Select-Object -First 1
+    if ($null -eq $property) { return $Default }
+    return $property.Value
+}
+
+function Invoke-PucAccountRequest([hashtable]$Body) {
+    [byte[]]$jsonBody = ConvertTo-PucJsonBytes -Value $Body -Depth 60
+    $params = @{
+        Method='POST'; Uri=$baseUri.AbsoluteUri.TrimEnd('/') + '/confs'; ContentType='application/json; charset=utf-8'
+        Headers=@{ Accept='application/json, text/plain, */*'; token=[string]$environmentConfig.token }
+        Body=$jsonBody; TimeoutSec=60
+    }
+    if ($environmentConfig.allowInsecureTls -eq $true -and (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) { $params.SkipCertificateCheck = $true }
+    $response = ConvertFrom-PucResponseEncoding -Value (Invoke-RestMethod @params)
+    if ($null -eq $response) { throw "$($Body.cmd_name) returned an empty response. No retry was attempted." }
+    if ($null -ne $response.PSObject.Properties['result'] -and [string]$response.result -ne '0') {
+        throw "$($Body.cmd_name) failed: result=$([string]$response.result); msg=$([string](Get-PropertyValue $response 'msg' '')). No retry was attempted."
+    }
+    return $response
+}
+
+function Get-ExactAccount {
+    $pageIndex = 1
+    $matches = [Collections.Generic.List[object]]::new()
+    while ($true) {
+        $response = Invoke-PucAccountRequest ([ordered]@{
+            cmd_name='account_list_request'; user_id=[string]$environmentConfig.adminAccount; realm=[string]$environmentConfig.realm
+            page_sizes=30; page_index=$pageIndex; querykey=$Account; lock_query=0; filter=[ordered]@{by_role='';by_state=0}
+        })
+        foreach ($row in @((Get-PropertyValue $response 'account_list' @()))) {
+            if ([string]::Equals([string](Get-PropertyValue $row 'dispatcher_account' ''),$Account,[StringComparison]::OrdinalIgnoreCase)) { $matches.Add($row) }
+        }
+        $pageCount = 0
+        [void][int]::TryParse([string](Get-PropertyValue $response 'page_count' 0),[ref]$pageCount)
+        if ($pageCount -le 0 -or $pageIndex -ge $pageCount) { break }
+        if ($pageIndex -ge 1000) { throw 'Account lookup exceeded 1000 pages.' }
+        $pageIndex++
+    }
+    if ($matches.Count -ne 1) { throw "Exact account lookup for '$Account' returned $($matches.Count) matches." }
+    return $matches[0]
+}
+
+function Get-RecordHash($Record) {
+    $json = $Record | ConvertTo-Json -Depth 60 -Compress
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return (($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($json)) | ForEach-Object { $_.ToString('x2') }) -join '').ToUpperInvariant() }
+    finally { $sha.Dispose() }
+}
+
+try {
+    $timestampPassword = $null
+    $finalPassword = $null
+    $record = Get-ExactAccount
+    $snapshotHash = Get-RecordHash $record
+    if ($DryRun) {
+        [pscustomobject]@{ status='previewed'; action='ResetAccountPassword'; environment=$Environment; account=[string]$record.dispatcher_account; snapshotHash=$snapshotHash; finalPasswordConfigured=(-not [string]::IsNullOrWhiteSpace([string]$environmentConfig.newAccountPassword)); plannedWrites=2; writesUsed=0 } |
+            ConvertTo-Json -Compress
+        return
+    }
+    if (-not [string]::Equals($snapshotHash,$ExpectedSnapshotHash,[StringComparison]::OrdinalIgnoreCase)) { throw 'Account snapshot changed or does not match the authenticated dry run. Run DryRun again before resetting the password.' }
+
+    $finalPassword = [string]$environmentConfig.newAccountPassword
+    if ([string]::IsNullOrWhiteSpace($finalPassword)) { throw "newAccountPassword is empty for environment '$Environment'. Fill it in config.json locally." }
+    $timestampPassword = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString([Globalization.CultureInfo]::InvariantCulture)
+    $timestampCipher = ConvertTo-PucDesHex $timestampPassword
+    $finalCipher = ConvertTo-PucDesHex $finalPassword
+    $payload = [ordered]@{}
+    try {
+        foreach ($property in $record.PSObject.Properties) { $payload[$property.Name] = $property.Value }
+        $payload['cmd_name'] = 'update_account'
+        $payload['is_change_pwd'] = 1
+        if ([string]::IsNullOrWhiteSpace([string](Get-PropertyValue $record 'puc_id' ''))) { $payload['puc_id'] = [string]$environmentConfig.pucId }
+        $imei = Get-PropertyValue $record 'imei_list' @()
+        if ($imei -is [string]) {
+            $trimmed = $imei.Trim()
+            if (-not $trimmed) { $payload['imei_list'] = @() }
+            elseif ($trimmed.StartsWith('[')) { $payload['imei_list'] = @(($trimmed | ConvertFrom-Json)) }
+            else { $payload['imei_list'] = @($trimmed -split '[;,]' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+        } else { $payload['imei_list'] = @($imei) }
+        $payload['dispatcher_pwd'] = $timestampCipher
+        $stage1Response = Invoke-PucAccountRequest $payload
+        $payload['dispatcher_pwd'] = $finalCipher
+        try { $stage2Response = Invoke-PucAccountRequest $payload }
+        catch { throw "Timestamp password stage succeeded, but restoring newAccountPassword failed or was uncertain: $($_.Exception.Message)" }
+    } finally {
+        $timestampCipher = $null
+        $finalCipher = $null
+        if ($payload.Contains('dispatcher_pwd')) { $payload['dispatcher_pwd'] = $null }
+    }
+    [pscustomobject]@{ status='password-reset'; action='ResetAccountPassword'; environment=$Environment; account=[string]$record.dispatcher_account; snapshotHash=$snapshotHash; stage1Result=[string]$stage1Response.result; stage2Result=[string]$stage2Response.result; writesUsed=2; finalPasswordSource='newAccountPassword' } |
+        ConvertTo-Json -Compress
+} finally {
+    $timestampPassword = $null
+    $finalPassword = $null
+    if ($callbackChanged) { [Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCallback }
+}

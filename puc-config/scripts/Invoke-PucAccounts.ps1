@@ -60,7 +60,24 @@ try {
     $adapter = Join-Path $PSScriptRoot '..\references\accounts-adapter.json'
     if ($PlanOnly) { & $script -ConfigPath $temporaryPath -PlanOnly }
     elseif ($DryRun) { & $script -ConfigPath $temporaryPath -AdapterPath $adapter -DryRun }
-    else { & $script -ConfigPath $temporaryPath -AdapterPath $adapter -Confirm:$false }
+    else {
+        & $script -ConfigPath $temporaryPath -AdapterPath $adapter -Confirm:$false
+        try {
+            $policy = & (Join-Path $PSScriptRoot 'Invoke-PucFirstLoginPasswordCheck.ps1') -Environment $Environment -Action Status -DryRun -ConfigRoot $root | ConvertFrom-Json
+            [pscustomobject]@{
+                status='post-create-login-policy'; environment=$Environment
+                firstLoginPasswordValidation=[pscustomobject]@{
+                    known=$true; enabled=([int]$policy.currentFlag -eq 1); firstLoginChangeFlag=[int]$policy.currentFlag
+                    recommendation=$(if ([int]$policy.currentFlag -eq 1) { 'No policy change is required.' } else { 'Consider enabling first-login password validation.' })
+                }
+            } | ConvertTo-Json -Depth 5 -Compress
+        } catch {
+            [pscustomobject]@{
+                status='post-create-login-policy'; environment=$Environment
+                firstLoginPasswordValidation=[pscustomobject]@{ known=$false; enabled=$null; firstLoginChangeFlag=$null; recommendation='Policy status is unknown; query the login policy before deciding whether to enable it.'; error=$_.Exception.Message }
+            } | ConvertTo-Json -Depth 5 -Compress
+        }
+    }
 } finally {
     [Environment]::SetEnvironmentVariable('PUC_CONFIG_TOKEN', $oldToken)
     [Environment]::SetEnvironmentVariable('PUC_CONFIG_ADMIN_USER', $oldUser)

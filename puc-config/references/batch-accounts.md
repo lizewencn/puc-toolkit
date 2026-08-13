@@ -34,6 +34,7 @@ The default account password comes from the selected environment's plaintext `ne
 If it stops with `ACCOUNT_LOOKUP_DECISION_REQUIRED`, show the returned count and ask the user to choose between continuing account creation and updating existing account information. Continue creation only after an explicit choice, then rerun the live command with `-ContinueWhenMoreThan30Accounts`.
 
 3. Use `-DryRun` only when the user explicitly asks for a preview without creation. A later live command performs a fresh single lookup because dry-run state is not persisted.
-4. Return prepared and created accounts, generated range, duplicates, selected role, authorization lookups, and final per-item results directly to the user. Do not persist dry-run or live reports.
+4. After the live creation batch finishes, query the login policy once. Report whether "dispatcher first-login password validation" is enabled. If disabled, tell the user they can run the first-login password validation setting workflow; do not enable it automatically. If the query fails, preserve the creation result and report that policy status is unknown.
+5. Return prepared and created accounts, generated range, duplicates, selected role, authorization lookups, final per-item results, and `firstLoginPasswordValidation` directly to the user. Do not persist dry-run or live reports.
 
 Do not retry `add_account`. Stop on the first failed or uncertain response.

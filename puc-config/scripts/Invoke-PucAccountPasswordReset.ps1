@@ -7,7 +7,8 @@ param(
     [switch]$Live,
     [switch]$ConfirmLive,
     [string]$ExpectedSnapshotHash,
-    [string]$ConfigRoot
+    [string]$ConfigRoot,
+    [switch]$SkipPostPolicyStatus
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,12 +31,6 @@ $validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Validate 
 if ($validation.valid -ne $true) { throw "Saved token is not usable ($($validation.reason)). Complete the login workflow first." }
 $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
 $baseUri = [uri]$environmentConfig.baseUrl
-$oldCallback = [Net.ServicePointManager]::ServerCertificateValidationCallback
-$callbackChanged = $false
-if ($environmentConfig.allowInsecureTls -eq $true -and -not (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
-    [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-    $callbackChanged = $true
-}
 
 function Get-PropertyValue($Object, [string]$Name, $Default = $null) {
     $property = @($Object.PSObject.Properties.Match($Name)) | Select-Object -First 1
@@ -44,19 +39,25 @@ function Get-PropertyValue($Object, [string]$Name, $Default = $null) {
 }
 
 function Invoke-PucAccountRequest([hashtable]$Body) {
-    [byte[]]$jsonBody = ConvertTo-PucJsonBytes -Value $Body -Depth 60
-    $params = @{
-        Method='POST'; Uri=$baseUri.AbsoluteUri.TrimEnd('/') + '/confs'; ContentType='application/json; charset=utf-8'
-        Headers=@{ Accept='application/json, text/plain, */*'; token=[string]$environmentConfig.token }
-        Body=$jsonBody; TimeoutSec=60
-    }
-    if ($environmentConfig.allowInsecureTls -eq $true -and (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) { $params.SkipCertificateCheck = $true }
-    $response = ConvertFrom-PucResponseEncoding -Value (Invoke-RestMethod @params)
+    $response = Invoke-PucJsonRequest -Uri ([uri]($baseUri.AbsoluteUri.TrimEnd('/') + '/confs')) -Body $Body -Headers @{token=[string]$environmentConfig.token} -AllowInsecureTls ([bool]$environmentConfig.allowInsecureTls) -TimeoutSec 60 -Depth 60
     if ($null -eq $response) { throw "$($Body.cmd_name) returned an empty response. No retry was attempted." }
     if ($null -ne $response.PSObject.Properties['result'] -and [string]$response.result -ne '0') {
         throw "$($Body.cmd_name) failed: result=$([string]$response.result); msg=$([string](Get-PropertyValue $response 'msg' '')). No retry was attempted."
     }
     return $response
+}
+
+function Get-PostOperationPolicyStatus {
+    if ($SkipPostPolicyStatus) { return $null }
+    try {
+        $policy = & (Join-Path $PSScriptRoot 'Invoke-PucFirstLoginPasswordCheck.ps1') -Environment $Environment -Action Status -DryRun -ConfigRoot $root | ConvertFrom-Json
+        return [pscustomobject]@{
+            known=$true; enabled=([int]$policy.currentFlag -eq 1); firstLoginChangeFlag=[int]$policy.currentFlag
+            recommendation=$(if ([int]$policy.currentFlag -eq 1) { 'No policy change is required.' } else { 'Consider enabling first-login password validation.' })
+        }
+    } catch {
+        return [pscustomobject]@{ known=$false; enabled=$null; firstLoginChangeFlag=$null; recommendation='Policy status is unknown; query the login policy before deciding whether to enable it.'; error=$_.Exception.Message }
+    }
 }
 
 function Get-ExactAccount {
@@ -127,10 +128,10 @@ try {
         $finalCipher = $null
         if ($payload.Contains('dispatcher_pwd')) { $payload['dispatcher_pwd'] = $null }
     }
-    [pscustomobject]@{ status='password-reset'; action='ResetAccountPassword'; environment=$Environment; account=[string]$record.dispatcher_account; snapshotHash=$snapshotHash; stage1Result=[string]$stage1Response.result; stage2Result=[string]$stage2Response.result; writesUsed=2; finalPasswordSource='newAccountPassword' } |
+    $policyStatus = Get-PostOperationPolicyStatus
+    [pscustomobject]@{ status='password-reset'; action='ResetAccountPassword'; environment=$Environment; account=[string]$record.dispatcher_account; snapshotHash=$snapshotHash; stage1Result=[string]$stage1Response.result; stage2Result=[string]$stage2Response.result; writesUsed=2; finalPasswordSource='newAccountPassword'; firstLoginPasswordValidation=$policyStatus } |
         ConvertTo-Json -Compress
 } finally {
     $timestampPassword = $null
     $finalPassword = $null
-    if ($callbackChanged) { [Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCallback }
 }

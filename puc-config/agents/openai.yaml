@@ -1,4 +1,4 @@
 interface:
   display_name: "PUC Config"
-  short_description: "Manage PUC accounts, personnel, incident levels, config, and License"
-  default_prompt: "Use $puc-config to safely configure a PUC environment, including accounts, personnel, and police incident alarm levels."
+  short_description: "Manage PUC accounts, login policies, config, and License"
+  default_prompt: "Use $puc-config to safely configure a PUC environment, including querying or setting its login policies."

@@ -12,26 +12,10 @@ $root = Get-PucConfigRoot $ConfigRoot
 $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
 $adapter = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '..\references\accounts-adapter.json') | ConvertFrom-Json
 $baseUri = [uri]$environmentConfig.baseUrl
-$oldCallback = [Net.ServicePointManager]::ServerCertificateValidationCallback
-$callbackChanged = $false
-if ($environmentConfig.allowInsecureTls -eq $true -and -not (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
-    [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-    $callbackChanged = $true
-}
 
 function Invoke-JsonRequest($Body, [hashtable]$Headers) {
-    [byte[]]$jsonBody = ConvertTo-PucJsonBytes -Value $Body -Depth 30
-    $params = @{
-        Method = 'POST'
-        Uri = $baseUri.AbsoluteUri.TrimEnd('/') + '/confs'
-        ContentType = 'application/json; charset=utf-8'
-        Body = $jsonBody
-        Headers = if ($null -eq $Headers) { @{ Accept='application/json, text/plain, */*' } } else { $Headers }
-    }
-    if ($environmentConfig.allowInsecureTls -eq $true -and (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
-        $params.SkipCertificateCheck = $true
-    }
-    return ConvertFrom-PucResponseEncoding -Value (Invoke-RestMethod @params)
+    $effectiveHeaders = if ($null -eq $Headers) { @{} } else { $Headers }
+    return Invoke-PucJsonRequest -Uri ([uri]($baseUri.AbsoluteUri.TrimEnd('/') + '/confs')) -Body $Body -Headers $effectiveHeaders -AllowInsecureTls ([bool]$environmentConfig.allowInsecureTls)
 }
 
 function New-RuntimeEntry($PendingLogin) {
@@ -110,6 +94,11 @@ try {
 
     $runtime = Get-PucRuntimeEntry -ConfigRoot $root -Name $Environment
     if ($Action -in @('InteractiveLogin','Captcha')) {
+        [void](Test-PucConfigWriteAccess -ConfigRoot $root)
+        [void](Resolve-PucNodeExecutable)
+        if ($Action -eq 'InteractiveLogin' -and -not [Environment]::UserInteractive) {
+            throw 'Interactive login requires a visible desktop session. Run this command with desktop/GUI permission.'
+        }
         if ($null -ne $runtime -and $null -ne $runtime.pendingLogin) {
             $oldSessionId = [string]$runtime.pendingLogin.sessionId
             $oldProcess = Get-Process -Id ([int]$runtime.pendingLogin.processId) -ErrorAction SilentlyContinue
@@ -208,6 +197,4 @@ try {
         throw ('Login was rejected: ' + ($parts -join '; ') + '. No retry was attempted.')
     }
     [pscustomobject]@{status='login_succeeded';environment=$Environment;tokenSaved=$true;sameProcess=$true} | ConvertTo-Json -Compress
-} finally {
-    if ($callbackChanged) { [Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCallback }
-}
+} finally {}

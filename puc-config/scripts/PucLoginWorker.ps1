@@ -157,29 +157,11 @@ public static class PucConsoleWindow {
     }
 }
 
-$oldCallback = [Net.ServicePointManager]::ServerCertificateValidationCallback
-$callbackChanged = $false
-if ($environmentConfig.allowInsecureTls -eq $true -and -not (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
-    [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-    $callbackChanged = $true
-}
-
 try {
-    $webSession = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    [void](Test-PucConfigWriteAccess -ConfigRoot $root)
+    $cookieJar = @{}
     function Invoke-JsonRequest($Body) {
-        [byte[]]$jsonBody = ConvertTo-PucJsonBytes -Value $Body -Depth 30
-        $params = @{
-            Method = 'POST'
-            Uri = $baseUri.AbsoluteUri.TrimEnd('/') + '/confs'
-            ContentType = 'application/json; charset=utf-8'
-            Body = $jsonBody
-            WebSession = $webSession
-            Headers = @{ Accept = 'application/json, text/plain, */*' }
-        }
-        if ($environmentConfig.allowInsecureTls -eq $true -and (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
-            $params.SkipCertificateCheck = $true
-        }
-        return ConvertFrom-PucResponseEncoding -Value (Invoke-RestMethod @params)
+        return Invoke-PucJsonRequest -Uri ([uri]($baseUri.AbsoluteUri.TrimEnd('/') + '/confs')) -Body $Body -AllowInsecureTls ([bool]$environmentConfig.allowInsecureTls) -CookieJar $cookieJar
     }
 
     # Match the working manager: common configuration, captcha, user input, then login in one process.
@@ -242,6 +224,4 @@ try {
     Write-AtomicJson -Path $resultPath -Value ([ordered]@{
         status='failed'; environment=$Environment; result=''; msg=$_.Exception.Message; detail=$_.Exception.Message
     })
-} finally {
-    if ($callbackChanged) { [Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCallback }
-}
+} finally {}

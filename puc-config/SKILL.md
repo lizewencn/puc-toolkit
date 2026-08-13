@@ -1,11 +1,17 @@
 ---
 name: puc-config
-description: Configure a named PUC environment through its configuration API, including reusable captcha login, saved-token validation, account creation, account information updates, single or batch dispatcher account password reset or password change, batch personnel creation, configuration and License import/export, permission menu import, and platform function switches. Use when Codex needs to authenticate to a PUC configuration tool; preview or create dispatcher accounts; reset, change, modify, or update one or many accounts' passwords; safely update an existing account's other editable information; preview or create address-book personnel; export or import PUC configuration or License files; upload a permission menu JSON file; configure duplicate-login forced logout; or extend the PUC configuration workflow with another reference module.
+description: Configure a named PUC environment through its configuration API, including reusable captcha login, saved-token validation, account creation, single or batch account-information completion, account updates, single or batch dispatcher password reset, batch personnel creation, configuration and License import/export, permission menu import, and login-policy switches. Use when Codex needs to authenticate to PUC; create accounts; complete or normalize one or many existing accounts from the environment's current systems, access points, and root organizations; update editable account information; reset passwords; create personnel; transfer configuration or License files; import permission menus; query or set first-login password validation; or configure duplicate-login forced logout.
 ---
 
 # PUC Config
 
 Use this skill as the single PUC configuration entry point. Keep workflow-specific instructions in `references/` so new modules can be added without expanding this file.
+
+## Windows execution
+
+Run bundled PowerShell commands through `scripts\Invoke-PucScript.cmd`; do not invoke a bundled `.ps1` directly from the current PowerShell session. The launcher applies process-scoped `-NoProfile -ExecutionPolicy Bypass` without changing machine or user execution policy.
+
+For authentication and password-reset workflows, use the bundled Node transport. It sends request descriptors through stdin, returns response bytes through stdout, supports modern TLS independently of Windows PowerShell 5 Schannel, and never opens a local proxy port. Do not create a loopback TLS proxy or temporary copy of `config.json`.
 
 ## Local state
 
@@ -35,6 +41,7 @@ After the path selection is saved, if `config.json` is missing at the selected r
 - Authentication, captcha, saved-token status, or environment setup: read `references/login.md`.
 - Batch dispatcher accounts: read `references/batch-accounts.md` and `references/login.md`.
 - Single or batch dispatcher account password reset/change/update: read `references/reset-account-password.md` and `references/login.md`. Route every request whose intended changed value is one or more account passwords here, including requests such as "reset all mhw accounts", even when the user says "update account password" or mentions `update_account`; do not route it to general account information updates.
+- Single or batch existing-account information completion: read `references/complete-account-information.md` and `references/login.md`. Route requests such as "complete all mhw accounts", "补全账号信息", or "补齐这个账号的授权" here. Use its exact-account mode even when only one account is requested.
 - Existing dispatcher account updates: read `references/update-account.md` and `references/login.md`.
 - Batch address-book personnel: read `references/batch-personnel.md` and `references/login.md`.
 - Fixed police incident alarm-level configuration: read `references/incident-alarm-levels.md` and `references/login.md`.
@@ -42,6 +49,7 @@ After the path selection is saved, if `config.json` is missing at the selected r
 - Standalone License import or export: read `references/license.md` and `references/login.md`.
 - Permission menu import: read `references/permission-menu-import.md` and `references/login.md`.
 - Duplicate-account login forced logout: read `references/force-login.md` and `references/login.md`.
+- First-login password validation status, enable, or disable: read `references/first-login-password-check.md` and `references/login.md`.
 
 Read only the selected child reference. A new capability belongs in a new `references/<module>.md` file plus one routing bullet here.
 
@@ -52,10 +60,13 @@ Read only the selected child reference. A new capability belongs in a new `refer
 - If a later step requires a field that is empty in a successful response, do not fabricate a value or continue unsafely. Stop or skip that dependent step and state that the interface succeeded but the required data was empty. This is a workflow data condition, not an API failure.
 - Treat a response as an API failure only when `result` is present and not equal to `0`, the request has a transport/HTTP failure, the response cannot be decoded, or no response document is returned. A missing `result` is an invalid/unknown response contract, not evidence that a null business field caused failure.
 - Serialize every JSON request exactly once with `ConvertTo-PucJsonBytes`, which converts non-ASCII values to standard JSON `\uXXXX` escapes and then returns UTF-8 bytes. Send those bytes as `application/json; charset=utf-8`. Never pass a JSON string directly to `Invoke-RestMethod`; Windows PowerShell 5 or a legacy server can otherwise replace or misdecode non-ASCII parameter values.
+- Use `Invoke-PucJsonRequest` for authentication and password-reset HTTP calls. It resolves Node from `PUC_NODE_EXE`, `PATH`, or the bundled Codex runtime, passes credentials only through stdin, and handles TLS 1.2/1.3 without a listening port.
+- Use `Write-PucJson` for configuration updates. It validates a temporary JSON file and atomically replaces the destination; never write `config.json` with `Set-Content` directly.
 - Pass every JSON response through `ConvertFrom-PucResponseEncoding` before reading fields or checking duplicates. This safely reverses UTF-8 response bytes that Windows PowerShell 5 decoded as Latin-1 while leaving already-correct Unicode, ASCII, and invalid conversion candidates unchanged.
 - Resolve one exact environment before any network call.
 - Prefer a saved token. Validate it with an authenticated read before requesting a captcha.
 - Display the captcha only in the local interactive login dialog. Never send it through chat, OCR it, infer it, or guess it.
+- Before fetching a captcha, require write access to the selected configuration root and a visible desktop session. Obtain filesystem/GUI approval before starting login so a successful token can be saved directly to the authoritative config.
 - Treat network failure as environment unavailability, not token rejection.
 - On any authentication, lookup, or write error, stop and show the user the sanitized HTTP status, server result code, and server error message when available. Do not automatically retry or fetch another captcha; wait for explicit user direction.
 - Run an authenticated dry run or an equivalent in-process preflight before every live batch.

@@ -1,0 +1,161 @@
+[CmdletBinding()]
+param(
+    [ValidateSet('Module','Transport','AccountsFile','SinglePasswordReset','LiveFlow','AccountCreation','AccountCompletion','All')][string]$Case = 'All',
+    [int]$ExternalServerPort
+)
+
+$ErrorActionPreference = 'Stop'
+$skillRoot = Split-Path -Parent $PSScriptRoot
+$modulePath = Join-Path $skillRoot 'scripts\PucConfig.psm1'
+$bundledNode = 'C:\Users\250600074\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe'
+$nodeCommand = Get-Command node.exe,node -ErrorAction SilentlyContinue | Select-Object -First 1
+$node = if ($nodeCommand) { $nodeCommand.Source } elseif (Test-Path -LiteralPath $bundledNode) { $bundledNode } else { throw 'Node.js test runtime was not found.' }
+$oldNode = $env:PUC_NODE_EXE
+$env:PUC_NODE_EXE = $node
+
+function Assert-Equal($Actual,$Expected,[string]$Message) { if ([string]$Actual -cne [string]$Expected) { throw "$Message. Expected '$Expected', got '$Actual'." } }
+function Assert-True([bool]$Condition,[string]$Message) { if (-not $Condition) { throw $Message } }
+function Assert-Throws([scriptblock]$Action,[string]$Pattern) { try { & $Action; throw "Expected error matching '$Pattern'." } catch { if ($_.Exception.Message -notmatch $Pattern) { throw "Expected '$Pattern', got '$($_.Exception.Message)'." } } }
+function New-TempDirectory { $path=Join-Path ([IO.Path]::GetTempPath()) ('puc-core-'+[guid]::NewGuid().ToString('N')); New-Item -ItemType Directory -Path $path|Out-Null; return $path }
+function Get-FreePort { $listener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0);$listener.Start();try{return ([Net.IPEndPoint]$listener.LocalEndpoint).Port}finally{$listener.Stop()} }
+function Start-FakeServer([int]$Port) {
+    $serverPath=Join-Path $PSScriptRoot 'puc_fake_server.js'
+    $source=[IO.File]::ReadAllText($serverPath,[Text.Encoding]::UTF8)
+    $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($source))
+    $arguments='-e "process.argv[2]='''+$Port+''';eval(Buffer.from('''+$encoded+''',''base64'').toString(''utf8''))"'
+    $process=Start-Process -FilePath $node -ArgumentList $arguments -WindowStyle Hidden -PassThru
+    for($i=0;$i-lt 50;$i++){try{$client=[Net.Sockets.TcpClient]::new();$client.Connect('127.0.0.1',$Port);$client.Dispose();return $process}catch{Start-Sleep -Milliseconds 100}}
+    throw 'Fake server did not start.'
+}
+function Stop-FakeServer($Process) {
+    if ($null -eq $Process) { return }
+    try {
+        if (-not $Process.HasExited) { Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue }
+        try { $Process.WaitForExit(5000) | Out-Null } catch {}
+    } finally { $Process.Dispose() }
+}
+function New-TestConfig([string]$Root,[int]$Port) {
+    $config=[ordered]@{version=1;environments=@([ordered]@{name='fake';baseUrl="http://127.0.0.1:$Port";realm='puc.com';adminAccount='admin';adminPassword='admin-secret';newAccountPassword='new-secret';token='test-token';pucId='00001';allowInsecureTls=$false})}
+    $config|ConvertTo-Json -Depth 10|Set-Content -LiteralPath (Join-Path $Root 'config.json') -Encoding UTF8
+}
+
+function Test-Module {
+    Import-Module $modulePath -Force
+    $dir=New-TempDirectory
+    try {
+        $path=Join-Path $dir 'config.json'
+        Write-PucJson -Path $path -Value ([ordered]@{version=1;value='first'})
+        Write-PucJson -Path $path -Value ([ordered]@{version=1;value='second'})
+        Assert-Equal (Read-PucJson -Path $path -Default $null).value 'second' 'Atomic JSON write'
+        Assert-Equal @(Get-ChildItem -LiteralPath $dir -Filter '*.tmp.*').Count 0 'Temporary files remain'
+        Assert-Equal @(Get-ChildItem -LiteralPath $dir -Filter '*.backup.*').Count 0 'Backup files remain'
+    } finally { Remove-Item -LiteralPath $dir -Recurse -Force }
+}
+function Test-Transport {
+    Import-Module $modulePath -Force
+    $port=if($ExternalServerPort){$ExternalServerPort}else{Get-FreePort};$server=if($ExternalServerPort){$null}else{Start-FakeServer $port}
+    try {
+        $cookies=@{}
+        $response=Invoke-PucHttpRequest -Method GET -Uri ([uri]"http://127.0.0.1:$port/health") -CookieJar $cookies
+        Assert-Equal $response.StatusCode 200 'Transport status'
+        Assert-Equal $cookies.session 'abc' 'Cookie capture'
+        Assert-True ([Text.Encoding]::UTF8.GetString($response.BodyBytes) -match '"ok":true') 'Transport response body'
+    } finally { Stop-FakeServer $server }
+}
+function Test-AccountsFile {
+    $dir=New-TempDirectory
+    try {
+        $accounts=Join-Path $dir 'accounts.json';[IO.File]::WriteAllText($accounts,'["mhw19001","mhw19002"]')
+        $command=Join-Path $skillRoot 'scripts\Invoke-PucAccountPasswordResetBatch.ps1'
+        $result=& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $command -Environment fake -AccountsPath $accounts -PlanOnly|ConvertFrom-Json
+        Assert-Equal $result.accountCount 2 'Exact account count'
+        $duplicate=Join-Path $dir 'duplicate.json';[IO.File]::WriteAllText($duplicate,'["mhw19001","MHW19001"]')
+        Assert-Throws { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $command -Environment fake -AccountsPath $duplicate -PlanOnly 2>&1 } 'duplicate account'
+    } finally { Remove-Item -LiteralPath $dir -Recurse -Force }
+}
+function Test-LiveFlow {
+    $dir=New-TempDirectory;$port=if($ExternalServerPort){$ExternalServerPort}else{Get-FreePort};$server=if($ExternalServerPort){$null}else{Start-FakeServer $port}
+    try {
+        New-TestConfig $dir $port
+        $accounts=Join-Path $dir 'accounts.json';[IO.File]::WriteAllText($accounts,'["mhw19001","mhw19002"]')
+        $manifest=Join-Path $dir 'manifest.json';$command=Join-Path $skillRoot 'scripts\Invoke-PucAccountPasswordResetBatch.ps1'
+        $preview=& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $command -Environment fake -AccountsPath $accounts -DryRun -ManifestPath $manifest -ConfigRoot $dir|ConvertFrom-Json
+        Assert-Equal $preview.accountCount 2 'Preview count'
+        $live=& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $command -Environment fake -Live -ConfirmLive -ManifestPath $manifest -ConfigRoot $dir|ConvertFrom-Json
+        Assert-Equal $live.succeeded 2 'Live success count';Assert-Equal $live.failed 0 'Live failure count'
+        Assert-True ($live.firstLoginPasswordValidation.known -eq $true) 'Batch policy status is known'
+        Assert-True ($live.firstLoginPasswordValidation.enabled -eq $true) 'Batch policy is enabled'
+        Import-Module $modulePath -Force
+        $writesResponse=Invoke-PucHttpRequest -Method GET -Uri ([uri]"http://127.0.0.1:$port/writes")
+        $writes=[Text.Encoding]::UTF8.GetString($writesResponse.BodyBytes)|ConvertFrom-Json
+        # /writes ignores the request body and records exactly two ordered writes per account.
+        Assert-Equal @($writes.writes).Count 4 'Write count'
+        Assert-Equal $writes.policyQueries 1 'Batch policy query count'
+        foreach($account in @('mhw19001','mhw19002')){Assert-Equal @($writes.writes|Where-Object account -eq $account).Count 2 "Writes for $account"}
+    } finally { Stop-FakeServer $server;Remove-Item -LiteralPath $dir -Recurse -Force }
+}
+function Test-SinglePasswordReset {
+    $dir=New-TempDirectory;$port=if($ExternalServerPort){$ExternalServerPort}else{Get-FreePort};$server=if($ExternalServerPort){$null}else{Start-FakeServer $port}
+    try {
+        New-TestConfig $dir $port
+        $command=Join-Path $skillRoot 'scripts\Invoke-PucAccountPasswordReset.ps1'
+        $preview=& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $command -Environment fake -Account mhw19001 -DryRun -ConfigRoot $dir|ConvertFrom-Json
+        $live=& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $command -Environment fake -Account mhw19001 -Live -ConfirmLive -ExpectedSnapshotHash $preview.snapshotHash -ConfigRoot $dir|ConvertFrom-Json
+        Assert-Equal $live.status 'password-reset' 'Single reset status'
+        Assert-True ($live.firstLoginPasswordValidation.known -eq $true) 'Single reset policy status is known'
+        Assert-True ($live.firstLoginPasswordValidation.enabled -eq $true) 'Single reset policy is enabled'
+        Import-Module $modulePath -Force
+        $writesResponse=Invoke-PucHttpRequest -Method GET -Uri ([uri]"http://127.0.0.1:$port/writes")
+        $writes=[Text.Encoding]::UTF8.GetString($writesResponse.BodyBytes)|ConvertFrom-Json
+        Assert-Equal @($writes.writes|Where-Object account -eq 'mhw19001').Count 2 'Single reset write count'
+        Assert-Equal $writes.policyQueries 1 'Single reset policy query count'
+    } finally { Stop-FakeServer $server;Remove-Item -LiteralPath $dir -Recurse -Force }
+}
+function Test-AccountCreation {
+    $dir=New-TempDirectory;$port=if($ExternalServerPort){$ExternalServerPort}else{Get-FreePort};$server=if($ExternalServerPort){$null}else{Start-FakeServer $port}
+    try {
+        New-TestConfig $dir $port
+        $command=Join-Path $skillRoot 'scripts\Invoke-PucAccounts.ps1'
+        $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $command -Environment fake -Prefix new -StartSequence 1 -Count 1 -Live -ConfirmLive -ConfigRoot $dir)
+        $jsonLine=@($output|Where-Object { ([string]$_).TrimStart().StartsWith('{') })|Select-Object -Last 1
+        Assert-True (-not [string]::IsNullOrWhiteSpace([string]$jsonLine)) 'Account creation policy output is missing'
+        $policyResult=$jsonLine|ConvertFrom-Json
+        Assert-Equal $policyResult.status 'post-create-login-policy' 'Account creation policy output status'
+        Assert-True ($policyResult.firstLoginPasswordValidation.known -eq $true) 'Account creation policy status is known'
+        Assert-True ($policyResult.firstLoginPasswordValidation.enabled -eq $true) 'Account creation policy is enabled'
+        Import-Module $modulePath -Force
+        $writesResponse=Invoke-PucHttpRequest -Method GET -Uri ([uri]"http://127.0.0.1:$port/writes")
+        $writes=[Text.Encoding]::UTF8.GetString($writesResponse.BodyBytes)|ConvertFrom-Json
+        Assert-Equal @($writes.writes|Where-Object operation -eq 'add_account').Count 1 'Created account count'
+        Assert-Equal $writes.policyQueries 1 'Account creation policy query count'
+    } finally { Stop-FakeServer $server;Remove-Item -LiteralPath $dir -Recurse -Force }
+}
+function Test-AccountCompletion {
+    $dir=New-TempDirectory;$port=if($ExternalServerPort){$ExternalServerPort}else{Get-FreePort};$server=if($ExternalServerPort){$null}else{Start-FakeServer $port}
+    try {
+        New-TestConfig $dir $port
+        $command=Join-Path $skillRoot 'scripts\Invoke-PucAccountCompletion.ps1'
+        $singleManifest=Join-Path $dir 'single.json'
+        $single=& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $command -Environment fake -Account mhw19001 -DryRun -ManifestPath $singleManifest -ConfigRoot $dir|ConvertFrom-Json
+        Assert-Equal $single.accountCount 1 'Single completion target count'
+        Assert-Equal $single.alreadyComplete 1 'Single already-complete count'
+        $batchManifest=Join-Path $dir 'batch.json'
+        $preview=& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $command -Environment fake -Query mhw -NormalizeGeneratedAlias -DryRun -ManifestPath $batchManifest -ConfigRoot $dir|ConvertFrom-Json
+        Assert-Equal $preview.accountCount 2 'Batch completion target count'
+        Assert-Equal $preview.updateCount 2 'Batch completion update count'
+        $live=& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $command -Environment fake -Live -ConfirmLive -ManifestPath $batchManifest -ConfigRoot $dir|ConvertFrom-Json
+        Assert-Equal $live.succeeded 2 'Batch completion success count'
+        Import-Module $modulePath -Force
+        $writesResponse=Invoke-PucHttpRequest -Method GET -Uri ([uri]"http://127.0.0.1:$port/writes")
+        $writes=[Text.Encoding]::UTF8.GetString($writesResponse.BodyBytes)|ConvertFrom-Json
+        $completionWrites=@($writes.writes|Where-Object { [int]$_.isChangePassword -eq 0 })
+        Assert-Equal $completionWrites.Count 2 'Completion write count'
+        Assert-Equal $completionWrites[0].account 'mhw19001' 'Completion write order first'
+        Assert-Equal $completionWrites[1].account 'mhw19002' 'Completion write order second'
+    } finally { Stop-FakeServer $server;Remove-Item -LiteralPath $dir -Recurse -Force }
+}
+
+try {
+    $cases=if($Case-eq'All'){@('Module','Transport','AccountsFile','SinglePasswordReset','LiveFlow','AccountCreation','AccountCompletion')}else{@($Case)}
+    foreach($name in $cases){& "Test-$name";Write-Output "PASS $name"}
+} finally { $env:PUC_NODE_EXE=$oldNode }

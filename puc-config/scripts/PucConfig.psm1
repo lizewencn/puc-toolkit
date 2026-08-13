@@ -34,7 +34,126 @@ function Write-PucJson {
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)]$Value)
     $parent = Split-Path -Parent $Path
     if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-    $Value | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $Path -Encoding UTF8
+    $resolvedPath = [IO.Path]::GetFullPath($Path)
+    $temporaryPath = $resolvedPath + '.tmp.' + [guid]::NewGuid().ToString('N')
+    $backupPath = $resolvedPath + '.backup.' + [guid]::NewGuid().ToString('N')
+    try {
+        $json = $Value | ConvertTo-Json -Depth 30
+        [IO.File]::WriteAllText($temporaryPath,$json,[Text.UTF8Encoding]::new($true))
+        [void](Get-Content -Raw -LiteralPath $temporaryPath | ConvertFrom-Json)
+        if (Test-Path -LiteralPath $resolvedPath) {
+            [IO.File]::Replace($temporaryPath,$resolvedPath,$backupPath,$true)
+            Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
+        } else {
+            [IO.File]::Move($temporaryPath,$resolvedPath)
+        }
+    } catch {
+        if (Test-Path -LiteralPath $backupPath) {
+            if (-not (Test-Path -LiteralPath $resolvedPath)) { [IO.File]::Move($backupPath,$resolvedPath) }
+        }
+        throw
+    } finally {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Resolve-PucNodeExecutable {
+    if (-not [string]::IsNullOrWhiteSpace($env:PUC_NODE_EXE)) {
+        $explicit = [IO.Path]::GetFullPath($env:PUC_NODE_EXE)
+        if (-not (Test-Path -LiteralPath $explicit -PathType Leaf)) { throw "PUC_NODE_EXE does not exist: $explicit" }
+        return $explicit
+    }
+    $command = Get-Command node.exe,node -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -ne $command) { return $command.Source }
+    $bundled = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe'
+    if (Test-Path -LiteralPath $bundled -PathType Leaf) { return $bundled }
+    throw 'Node.js is required for PUC HTTPS transport. Install Node.js or set PUC_NODE_EXE to node.exe.'
+}
+
+function Update-PucCookieJar {
+    param([hashtable]$CookieJar, [object[]]$SetCookieHeaders)
+    if ($null -eq $CookieJar) { return }
+    foreach ($header in @($SetCookieHeaders)) {
+        $pair = ([string]$header).Split(';',2)[0]
+        $separator = $pair.IndexOf('=')
+        if ($separator -le 0) { continue }
+        $name = $pair.Substring(0,$separator).Trim()
+        $value = $pair.Substring($separator + 1).Trim()
+        if ($value) { $CookieJar[$name] = $value } else { $CookieJar.Remove($name) }
+    }
+}
+
+function Invoke-PucHttpRequest {
+    param(
+        [Parameter(Mandatory)][ValidateSet('GET','POST','PUT','DELETE','HEAD')][string]$Method,
+        [Parameter(Mandatory)][uri]$Uri,
+        [hashtable]$Headers = @{},
+        [byte[]]$Body = @(),
+        [bool]$AllowInsecureTls = $false,
+        [ValidateRange(1,300)][int]$TimeoutSec = 60,
+        [hashtable]$CookieJar
+    )
+    $effectiveHeaders = @{}
+    foreach ($key in $Headers.Keys) { $effectiveHeaders[[string]$key] = [string]$Headers[$key] }
+    if ($null -ne $CookieJar -and $CookieJar.Count -gt 0) {
+        $effectiveHeaders['Cookie'] = (($CookieJar.GetEnumerator() | Sort-Object Key | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join '; ')
+    }
+    if ($Body.Count -gt 0 -and -not $effectiveHeaders.ContainsKey('Content-Length')) { $effectiveHeaders['Content-Length'] = [string]$Body.Count }
+    $descriptor = [ordered]@{
+        method=$Method; uri=$Uri.AbsoluteUri; headers=$effectiveHeaders
+        bodyBase64=[Convert]::ToBase64String($Body); allowInsecureTls=$AllowInsecureTls; timeoutMs=$TimeoutSec*1000
+    }
+    $transportSource = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'PucHttpTransport.js'),[Text.Encoding]::UTF8)
+    $transportBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($transportSource))
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = Resolve-PucNodeExecutable
+    $startInfo.Arguments = '-e "eval(Buffer.from(''' + $transportBase64 + ''',''base64'').toString(''utf8''))"'
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) { throw 'Could not start the PUC HTTP transport.' }
+        $process.StandardInput.Write(($descriptor | ConvertTo-Json -Depth 10 -Compress))
+        $process.StandardInput.Close()
+        $stdout = $process.StandardOutput.ReadToEnd()
+        $stderr = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) { throw $(if ($stderr.Trim()) { $stderr.Trim() } else { 'PUC HTTP transport failed without an error message.' }) }
+        $result = $stdout | ConvertFrom-Json
+        if ([int]$result.statusCode -lt 200 -or [int]$result.statusCode -ge 300) {
+            throw "PUC HTTP request failed: HTTP $([int]$result.statusCode) $([string]$result.statusMessage)."
+        }
+        $setCookie = @()
+        if ($null -ne $result.headers -and $null -ne $result.headers.PSObject.Properties['set-cookie']) { $setCookie = @($result.headers.'set-cookie') }
+        Update-PucCookieJar -CookieJar $CookieJar -SetCookieHeaders $setCookie
+        return [pscustomobject]@{
+            StatusCode=[int]$result.statusCode; Headers=$result.headers; TlsProtocol=[string]$result.tlsProtocol
+            BodyBytes=[Convert]::FromBase64String([string]$result.bodyBase64)
+        }
+    } finally { $process.Dispose() }
+}
+
+function Invoke-PucJsonRequest {
+    param(
+        [Parameter(Mandatory)][uri]$Uri,
+        [Parameter(Mandatory)]$Body,
+        [hashtable]$Headers = @{},
+        [bool]$AllowInsecureTls = $false,
+        [ValidateRange(1,300)][int]$TimeoutSec = 60,
+        [hashtable]$CookieJar,
+        [ValidateRange(2,100)][int]$Depth = 30
+    )
+    $effectiveHeaders = @{ Accept='application/json, text/plain, */*'; 'Content-Type'='application/json; charset=utf-8' }
+    foreach ($key in $Headers.Keys) { $effectiveHeaders[[string]$key] = [string]$Headers[$key] }
+    $response = Invoke-PucHttpRequest -Method POST -Uri $Uri -Headers $effectiveHeaders -Body (ConvertTo-PucJsonBytes -Value $Body -Depth $Depth) -AllowInsecureTls $AllowInsecureTls -TimeoutSec $TimeoutSec -CookieJar $CookieJar
+    if ($null -eq $response.BodyBytes -or $response.BodyBytes.Count -eq 0) { return $null }
+    $text = [Text.Encoding]::UTF8.GetString($response.BodyBytes)
+    try { return ConvertFrom-PucResponseEncoding -Value ($text | ConvertFrom-Json) }
+    catch { throw "PUC response is not valid JSON: $($_.Exception.Message)" }
 }
 
 function Get-PucEnvironment {
@@ -45,6 +164,16 @@ function Get-PucEnvironment {
     $matches = @($config.environments | Where-Object { $_.name -eq $Name })
     if ($matches.Count -ne 1) { throw "Environment '$Name' resolved to $($matches.Count) entries in $path" }
     return $matches[0]
+}
+
+function Test-PucConfigWriteAccess {
+    param([Parameter(Mandatory)][string]$ConfigRoot)
+    if (-not (Test-Path -LiteralPath $ConfigRoot -PathType Container)) { throw "PUC config root does not exist: $ConfigRoot" }
+    $probe = Join-Path $ConfigRoot ('.write-test-' + [guid]::NewGuid().ToString('N'))
+    try { [IO.File]::WriteAllBytes($probe,[byte[]]@(0x50,0x55,0x43)) }
+    catch { throw "PUC config root is not writable: $ConfigRoot. Obtain write approval before login or configuration changes. $($_.Exception.Message)" }
+    finally { Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue }
+    return $true
 }
 
 function Get-PucEntry {
@@ -159,4 +288,4 @@ function Get-PucPropertyPath {
     return $current
 }
 
-Export-ModuleMember -Function Get-PucDefaultConfigRoot,Get-PucSettingsPath,Get-PucConfigRoot,Read-PucJson,Write-PucJson,Get-PucEnvironment,Get-PucEntry,Set-PucEntry,Protect-PucString,Unprotect-PucString,ConvertTo-PucJsonBytes,ConvertFrom-PucResponseEncoding,ConvertTo-PucDesHex,Get-PucRuntimeEntry,Set-PucRuntimeEntry,Get-PucPropertyPath
+Export-ModuleMember -Function Get-PucDefaultConfigRoot,Get-PucSettingsPath,Get-PucConfigRoot,Read-PucJson,Write-PucJson,Get-PucEnvironment,Test-PucConfigWriteAccess,Get-PucEntry,Set-PucEntry,Protect-PucString,Unprotect-PucString,ConvertTo-PucJsonBytes,ConvertFrom-PucResponseEncoding,ConvertTo-PucDesHex,Get-PucRuntimeEntry,Set-PucRuntimeEntry,Get-PucPropertyPath,Resolve-PucNodeExecutable,Invoke-PucHttpRequest,Invoke-PucJsonRequest

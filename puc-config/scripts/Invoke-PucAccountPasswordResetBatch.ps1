@@ -2,6 +2,7 @@
 param(
     [Parameter(Mandatory)][string]$Environment,
     [string]$Query,
+    [string]$AccountsPath,
     [string]$ManifestPath,
     [switch]$PlanOnly,
     [switch]$DryRun,
@@ -14,7 +15,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 if (@($PlanOnly,$DryRun,$Live | Where-Object { $_ }).Count -ne 1) { throw 'Select exactly one mode: PlanOnly, DryRun, or Live.' }
-if (($PlanOnly -or $DryRun) -and [string]::IsNullOrWhiteSpace($Query)) { throw 'PlanOnly and DryRun require Query.' }
+if (($PlanOnly -or $DryRun) -and ([string]::IsNullOrWhiteSpace($Query) -eq [string]::IsNullOrWhiteSpace($AccountsPath))) { throw 'PlanOnly and DryRun require exactly one target source: Query or AccountsPath.' }
 if (($DryRun -or $Live) -and [string]::IsNullOrWhiteSpace($ManifestPath)) { throw 'DryRun and Live require ManifestPath.' }
 if ($Live -and -not $ConfirmLive) { throw 'Live batch reset requires ConfirmLive after explicit confirmation.' }
 if ($Environment -notmatch '^[A-Za-z0-9_-]+$') { throw 'Environment contains unsupported characters.' }
@@ -47,6 +48,7 @@ function Start-ResetChildren([object[]]$Entries, [ValidateSet('DryRun','Live')][
             $hash = [string](Get-PropertyValue $entry 'snapshotHash' '')
             if ($hash -notmatch '^[A-Fa-f0-9]{64}$') { throw "Account '$account' has an invalid snapshot hash." }
             $arguments += @('-Live','-ConfirmLive','-ExpectedSnapshotHash',$hash)
+            $arguments += '-SkipPostPolicyStatus'
         }
 
         $startInfo = [Diagnostics.ProcessStartInfo]::new()
@@ -81,18 +83,31 @@ function Start-ResetChildren([object[]]$Entries, [ValidateSet('DryRun','Live')][
     return @($results)
 }
 
+function Get-RequestedAccounts([string]$Path) {
+    $resolved = (Resolve-Path -LiteralPath $Path).Path
+    $document = Get-Content -Raw -LiteralPath $resolved | ConvertFrom-Json
+    if ($document -is [string] -or -not ($document -is [System.Collections.IEnumerable])) { throw 'AccountsPath must contain a JSON array of account strings.' }
+    $seen = @{}
+    $accounts = [Collections.Generic.List[string]]::new()
+    foreach ($item in @($document)) {
+        if (-not ($item -is [string])) { throw 'AccountsPath must contain only account strings.' }
+        $account = $item.Trim()
+        if ($account -notmatch '^[A-Za-z0-9_.@-]+$') { throw "Account '$account' contains unsupported characters." }
+        $key = $account.ToUpperInvariant()
+        if ($seen.ContainsKey($key)) { throw "AccountsPath contains duplicate account '$account'." }
+        $seen[$key] = $true
+        $accounts.Add($account)
+    }
+    if ($accounts.Count -eq 0) { throw 'AccountsPath must contain at least one account.' }
+    return @($accounts)
+}
+
 function Get-MatchingAccounts([string]$AccountQuery) {
     $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
     $validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Validate -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
     if ($validation.valid -ne $true) { throw "Saved token is not usable ($($validation.reason)). Complete the login workflow first." }
     $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
     $baseUri = [uri]$environmentConfig.baseUrl
-    $oldCallback = [Net.ServicePointManager]::ServerCertificateValidationCallback
-    $callbackChanged = $false
-    if ($environmentConfig.allowInsecureTls -eq $true -and -not (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
-        [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-        $callbackChanged = $true
-    }
     try {
         $pageIndex = 1
         $accounts = [Collections.Generic.List[string]]::new()
@@ -101,13 +116,7 @@ function Get-MatchingAccounts([string]$AccountQuery) {
                 cmd_name='account_list_request'; user_id=[string]$environmentConfig.adminAccount; realm=[string]$environmentConfig.realm
                 page_sizes=30; page_index=$pageIndex; querykey=$AccountQuery; lock_query=0; filter=[ordered]@{by_role='';by_state=0}
             }
-            [byte[]]$jsonBody = ConvertTo-PucJsonBytes -Value $body -Depth 60
-            $params = @{
-                Method='POST'; Uri=$baseUri.AbsoluteUri.TrimEnd('/') + '/confs'; ContentType='application/json; charset=utf-8'
-                Headers=@{ Accept='application/json, text/plain, */*'; token=[string]$environmentConfig.token }; Body=$jsonBody; TimeoutSec=60
-            }
-            if ($environmentConfig.allowInsecureTls -eq $true -and (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) { $params.SkipCertificateCheck = $true }
-            $response = ConvertFrom-PucResponseEncoding -Value (Invoke-RestMethod @params)
+            $response = Invoke-PucJsonRequest -Uri ([uri]($baseUri.AbsoluteUri.TrimEnd('/') + '/confs')) -Body $body -Headers @{token=[string]$environmentConfig.token} -AllowInsecureTls ([bool]$environmentConfig.allowInsecureTls) -TimeoutSec 60 -Depth 60
             if ($null -eq $response -or [string](Get-PropertyValue $response 'result' '') -ne '0') {
                 throw "Account discovery failed on page $pageIndex. No retry was attempted."
             }
@@ -122,19 +131,29 @@ function Get-MatchingAccounts([string]$AccountQuery) {
             $pageIndex++
         }
         return @($accounts | Where-Object { $_ } | Sort-Object -Unique)
-    } finally {
-        if ($callbackChanged) { [Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCallback }
+    } finally {}
+}
+
+function Get-ExactRequestedAccounts([string]$Path) {
+    $requested = @(Get-RequestedAccounts $Path)
+    $found = [Collections.Generic.List[string]]::new()
+    foreach ($account in $requested) {
+        $matches = @(Get-MatchingAccounts $account | Where-Object { [string]::Equals($_,$account,[StringComparison]::OrdinalIgnoreCase) })
+        if ($matches.Count -ne 1) { throw "Exact account lookup for '$account' returned $($matches.Count) matches." }
+        $found.Add($matches[0])
     }
+    return @($found)
 }
 
 if ($PlanOnly) {
-    [pscustomobject]@{ status='planned-offline'; action='BatchResetAccountPassword'; environment=$Environment; query=$Query; accountConcurrency='parallel'; perAccountOrder=@('timestamp-password','newAccountPassword'); writesUsed=0 } | ConvertTo-Json -Depth 5 -Compress
+    $plannedAccounts = if ($AccountsPath) { @(Get-RequestedAccounts $AccountsPath) } else { @() }
+    [pscustomobject]@{ status='planned-offline'; action='BatchResetAccountPassword'; environment=$Environment; targetSource=$(if($AccountsPath){'accounts-file'}else{'query'}); query=$Query; accountCount=$(if($AccountsPath){$plannedAccounts.Count}else{$null}); accounts=$plannedAccounts; accountConcurrency='parallel'; perAccountOrder=@('timestamp-password','newAccountPassword'); writesUsed=0 } | ConvertTo-Json -Depth 5 -Compress
     return
 }
 
 if ($DryRun) {
-    $accounts = @(Get-MatchingAccounts $Query)
-    if ($accounts.Count -eq 0) { throw "No dispatcher accounts matched '$Query'." }
+    $accounts = @(if ($AccountsPath) { Get-ExactRequestedAccounts $AccountsPath } else { Get-MatchingAccounts $Query })
+    if ($accounts.Count -eq 0) { throw "No dispatcher accounts matched the selected target source." }
     $preview = @(Start-ResetChildren -Entries @($accounts | ForEach-Object { [pscustomobject]@{account=$_} }) -Mode DryRun)
     $failed = @($preview | Where-Object { -not $_.ok })
     if ($failed.Count -gt 0) {
@@ -142,12 +161,12 @@ if ($DryRun) {
         exit 1
     }
     $manifest = [ordered]@{
-        version=1; environment=$Environment; query=$Query; generatedAt=[DateTimeOffset]::UtcNow.ToString('o')
+        version=1; environment=$Environment; targetSource=$(if($AccountsPath){'accounts-file'}else{'query'}); query=$Query; generatedAt=[DateTimeOffset]::UtcNow.ToString('o')
         accounts=@($preview | ForEach-Object { [ordered]@{account=$_.account;snapshotHash=[string]$_.data.snapshotHash} })
     }
     $resolvedManifestPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ManifestPath)
     $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $resolvedManifestPath -Encoding UTF8
-    [pscustomobject]@{ status='previewed'; action='BatchResetAccountPassword'; environment=$Environment; query=$Query; accountCount=$manifest.accounts.Count; accounts=$manifest.accounts; manifestPath=$resolvedManifestPath; writesUsed=0 } | ConvertTo-Json -Depth 8 -Compress
+    [pscustomobject]@{ status='previewed'; action='BatchResetAccountPassword'; environment=$Environment; targetSource=$manifest.targetSource; query=$Query; accountCount=$manifest.accounts.Count; accounts=$manifest.accounts; manifestPath=$resolvedManifestPath; writesUsed=0 } | ConvertTo-Json -Depth 8 -Compress
     return
 }
 
@@ -164,5 +183,15 @@ $results = @($children | ForEach-Object {
     else { [pscustomobject]@{status='failed';account=$_.account;error=$_.error} }
 })
 $failed = @($children | Where-Object { -not $_.ok })
-[pscustomobject]@{ status=$(if ($failed.Count -eq 0) {'password-reset'} else {'partial-failure'}); action='BatchResetAccountPassword'; environment=$Environment; accountCount=$entries.Count; succeeded=($entries.Count-$failed.Count); failed=$failed.Count; results=$results } | ConvertTo-Json -Depth 10 -Compress
+$policyStatus = $null
+try {
+    $policy = & (Join-Path $PSScriptRoot 'Invoke-PucFirstLoginPasswordCheck.ps1') -Environment $Environment -Action Status -DryRun -ConfigRoot $root | ConvertFrom-Json
+    $policyStatus = [pscustomobject]@{
+        known=$true; enabled=([int]$policy.currentFlag -eq 1); firstLoginChangeFlag=[int]$policy.currentFlag
+        recommendation=$(if ([int]$policy.currentFlag -eq 1) { 'No policy change is required.' } else { 'Consider enabling first-login password validation.' })
+    }
+} catch {
+    $policyStatus = [pscustomobject]@{ known=$false; enabled=$null; firstLoginChangeFlag=$null; recommendation='Policy status is unknown; query the login policy before deciding whether to enable it.'; error=$_.Exception.Message }
+}
+[pscustomobject]@{ status=$(if ($failed.Count -eq 0) {'password-reset'} else {'partial-failure'}); action='BatchResetAccountPassword'; environment=$Environment; accountCount=$entries.Count; succeeded=($entries.Count-$failed.Count); failed=$failed.Count; results=$results; firstLoginPasswordValidation=$policyStatus } | ConvertTo-Json -Depth 10 -Compress
 if ($failed.Count -gt 0) { exit 1 }

@@ -27,7 +27,7 @@ Treat the two writes as two required stages, not retries. Never retry either wri
 Run an authenticated preview first:
 
 ```powershell
-& <skill>\scripts\Invoke-PucAccountPasswordReset.ps1 `
+<skill>\scripts\Invoke-PucScript.cmd Invoke-PucAccountPasswordReset.ps1 `
   -Environment <environment> `
   -Account <dispatcher-account> `
   -DryRun
@@ -36,7 +36,7 @@ Run an authenticated preview first:
 Show the exact environment, account, and returned snapshot hash without password material. Require explicit confirmation of those values. Then run live mode with that hash:
 
 ```powershell
-& <skill>\scripts\Invoke-PucAccountPasswordReset.ps1 `
+<skill>\scripts\Invoke-PucScript.cmd Invoke-PucAccountPasswordReset.ps1 `
   -Environment <environment> `
   -Account <dispatcher-account> `
   -Live `
@@ -45,6 +45,8 @@ Show the exact environment, account, and returned snapshot hash without password
 ```
 
 Live mode re-queries the account before writing and refuses to write when the fresh record no longer matches the preview snapshot. It then sends the timestamp-password stage followed by the `newAccountPassword` stage, with no post-write account refresh. Success requires `result: 0` from both requests.
+
+After a successful single reset, query the login policy and report whether "dispatcher first-login password validation" is enabled. If disabled, tell the user they can run the first-login password validation setting workflow; do not enable it automatically. A policy-query failure does not change the successful reset result; report the policy state as unknown.
 
 ## Batch reset protocol
 
@@ -57,6 +59,7 @@ A batch reset is a set of independent per-account workflows:
 - A failure for one account must not cancel or delay the other account workflows.
 - Do not automatically retry either write stage.
 - Report every account separately, including whether it failed before writing, at stage 1, or after stage 1 while restoring `newAccountPassword`.
+- After all account workers finish, query the login policy exactly once for the batch and include `firstLoginPasswordValidation` in the final result. Do not query once per account.
 - If an account snapshot changed after preview, perform no write for that account. Re-preview and re-confirm only that changed account. Never run an already successful account again while recovering a partial batch.
 
 This produces concurrency across accounts and a serial dependency only inside each account:
@@ -70,21 +73,37 @@ account C: update(timestamp) -> update(newAccountPassword)
 Preview all accounts matching a dispatcher-account query and save the snapshot manifest:
 
 ```powershell
-& <skill>\scripts\Invoke-PucAccountPasswordResetBatch.ps1 `
+<skill>\scripts\Invoke-PucScript.cmd Invoke-PucAccountPasswordResetBatch.ps1 `
   -Environment <environment> `
   -Query <account-query> `
   -DryRun `
   -ManifestPath <temporary-manifest.json>
 ```
 
+When the user supplies an explicit account set, write a temporary UTF-8 JSON array containing exactly those account strings and use `-AccountsPath` instead of `-Query`:
+
+```json
+["mhw19001", "mhw19002"]
+```
+
+```powershell
+<skill>\scripts\Invoke-PucScript.cmd Invoke-PucAccountPasswordResetBatch.ps1 `
+  -Environment <environment> `
+  -AccountsPath <accounts.json> `
+  -DryRun `
+  -ManifestPath <temporary-manifest.json>
+```
+
+The script rejects non-string values, invalid account characters, empty lists, and case-insensitive duplicates. It performs an exact case-insensitive lookup for every requested account and refuses the complete preview if any account is missing or ambiguous. Never create a broad query manifest and edit it by hand.
+
 After showing the complete manifest and receiving explicit confirmation, execute the batch:
 
 ```powershell
-& <skill>\scripts\Invoke-PucAccountPasswordResetBatch.ps1 `
+<skill>\scripts\Invoke-PucScript.cmd Invoke-PucAccountPasswordResetBatch.ps1 `
   -Environment <environment> `
   -Live `
   -ConfirmLive `
   -ManifestPath <temporary-manifest.json>
 ```
 
-The manifest contains only account identifiers and snapshot hashes, never passwords. Delete it after the batch completes.
+The manifest contains only account identifiers and snapshot hashes, never passwords. Delete both the account-list file and manifest after the batch completes. Password-reset requests use the bundled Node transport directly; do not start a local proxy or select a local port.

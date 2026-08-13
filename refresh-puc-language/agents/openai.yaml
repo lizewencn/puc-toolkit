@@ -1,0 +1,4 @@
+interface:
+  display_name: "Refresh PUC Language"
+  short_description: "Refresh environment locale entries safely through kubectl."
+  default_prompt: "Use $refresh-puc-language to refresh language entries on a target Kubernetes environment."

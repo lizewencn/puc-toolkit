@@ -1,0 +1,4 @@
+interface:
+  display_name: "Replace Environment Dist"
+  short_description: "Deploy dist and add a missing PUC service through YSP"
+  default_prompt: "Use $replace-env-dist to deploy my local dist directory and safely add the target PUC service if it is missing."

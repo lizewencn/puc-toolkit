@@ -1,0 +1,8 @@
+{
+  "environments": [
+    {
+      "host": "your-host",
+      "namespace": "puc"
+    }
+  ]
+}

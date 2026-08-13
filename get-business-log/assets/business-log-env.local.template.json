@@ -1,0 +1,8 @@
+{
+  "environments": [
+    {
+      "name": "your-log-service-name",
+      "host": "your-log-service-host"
+    }
+  ]
+}

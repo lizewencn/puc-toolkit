@@ -1,0 +1,4 @@
+interface:
+  display_name: "Get Business Log"
+  short_description: "Collect business logs from a log service directory."
+  default_prompt: "Use $get-business-log to collect business logs after confirming target environment, log service environment, log directory, account, and time range."

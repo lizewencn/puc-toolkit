@@ -1,0 +1,1 @@
+{"defaults":{"port":22,"username":"your-username","password":"your-password","timeoutSeconds":20},"environments":[{"name":"your-environment-name","host":"your-host","aliases":[]}]}

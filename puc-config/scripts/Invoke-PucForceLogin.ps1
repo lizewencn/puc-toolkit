@@ -38,16 +38,10 @@ if ($PlanOnly) {
     return
 }
 
-$validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Validate -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
+$validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Ensure -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
 if ($validation.valid -ne $true) { throw "Saved token is not usable ($($validation.reason)). Complete the login workflow first." }
 $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
 $baseUri = [uri]$environmentConfig.baseUrl
-$oldCallback = [Net.ServicePointManager]::ServerCertificateValidationCallback
-$callbackChanged = $false
-if ($environmentConfig.allowInsecureTls -eq $true -and -not (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
-    [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-    $callbackChanged = $true
-}
 
 function Invoke-PlatformRequest {
     param(
@@ -63,19 +57,7 @@ function Invoke-PlatformRequest {
         foreach ($key in $Query.Keys) { $queryString[$key] = [string]$Query[$key] }
         $builder.Query = $queryString.ToString()
     }
-    $params = @{
-        Method=$Method; Uri=$builder.Uri.AbsoluteUri; TimeoutSec=60
-        Headers=@{ Accept='application/json, text/plain, */*'; token=[string]$environmentConfig.token }
-    }
-    if ($null -ne $Body) {
-        [byte[]]$jsonBody = ConvertTo-PucJsonBytes -Value $Body -Depth 30
-        $params.ContentType = 'application/json; charset=utf-8'
-        $params.Body = $jsonBody
-    }
-    if ($environmentConfig.allowInsecureTls -eq $true -and (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
-        $params.SkipCertificateCheck = $true
-    }
-    return ConvertFrom-PucResponseEncoding -Value (Invoke-RestMethod @params)
+    return Invoke-PucJsonHttpRequest -Method $Method -Uri $builder.Uri -Body $Body -Headers @{token=[string]$environmentConfig.token} -AllowInsecureTls ([bool]$environmentConfig.allowInsecureTls) -TimeoutSec 60 -Depth 30
 }
 
 function Get-DataItems($Value) {
@@ -90,7 +72,7 @@ function Get-DataItems($Value) {
 
 function Assert-OuterSuccess($Response, [string]$Operation) {
     if ($null -eq $Response) { throw "$Operation returned an empty response." }
-    if ([string]$Response.code -ne '0') { throw "$Operation failed: code=$([string]$Response.code); msg=$([string]$Response.msg)." }
+    if ([string]$Response.code -ne '0') { throw (New-PucApiFailureMessage -Operation $Operation -Response $Response) }
 }
 
 function Assert-MmlSuccess($Response, [string]$Operation) {
@@ -100,7 +82,7 @@ function Assert-MmlSuccess($Response, [string]$Operation) {
     if ([string]$inner.ErrorCode -ne '0') {
         $message = [string]$inner.ErrorMsg
         if ([string]::IsNullOrWhiteSpace($message)) { $message = [string]$inner.ErrorMessage }
-        throw "$Operation failed: ErrorCode=$([string]$inner.ErrorCode); msg=$message."
+        throw (New-PucApiFailureMessage -Operation $Operation -Response $Response)
     }
     return $inner
 }
@@ -114,8 +96,7 @@ function Get-ForceLoginRecord($MmlResponse) {
     return $matches[0]
 }
 
-try {
-    $topologyResponse = Invoke-PlatformRequest -Method GET -Path '/nmpuc/mml/getValidTopoInfo'
+$topologyResponse = Invoke-PlatformRequest -Method GET -Path '/nmpuc/mml/getValidTopoInfo'
     Assert-OuterSuccess -Response $topologyResponse -Operation 'getValidTopoInfo'
     $topologyItems = @(Get-DataItems $topologyResponse.data)
     $topologyMatches = @($topologyItems | Where-Object {
@@ -173,6 +154,3 @@ try {
         status='updated'; action=$Action; environment=$Environment; neId=$neId; neType=$neType; neVersion=$neVersion
         previousValue=$currentValue; currentValue=$verifiedValue; desiredValue=$desiredValue; writeUsed=$true; verified=$true
     } | ConvertTo-Json -Compress
-} finally {
-    if ($callbackChanged) { [Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCallback }
-}

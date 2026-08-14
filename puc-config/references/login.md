@@ -61,22 +61,26 @@ Before sending `login_puc_account`, encrypt the plaintext `adminPassword` exactl
 
 ## Reuse a saved token
 
-Before captcha login, run:
+For normal authenticated work, run:
 
 ```powershell
-<skill>\scripts\Invoke-PucScript.cmd Invoke-PucAuth.ps1 -Action Validate -Environment <environment>
+<skill>\scripts\Invoke-PucScript.cmd Invoke-PucAuth.ps1 -Action Ensure -Environment <environment>
 ```
 
-- `valid: true`: skip captcha and login.
-- `reason: missing`: fetch a captcha.
-- `reason: rejected`: clear `token` in that environment, report the rejection, and stop. Fetch a new captcha only after explicit user direction.
+- A valid saved token returns immediately.
+- A missing token automatically starts the interactive captcha login.
+- Treat `role_request` response `result: 51800032` (`verify-token failed`) as the environment's explicit saved-token rejection signal. Clear the token, show the complete credential-redacted rejection response preview, and automatically start one interactive captcha login. Do not ask the user whether to continue.
+- Treat HTTP 401 or 403 from saved-token validation as compatibility rejection signals and follow the same automatic login transition.
+- For every other nonzero `result`, preserve the saved token, show the complete credential-redacted response preview, and stop. Do not reinterpret an unrelated business or service error as token expiry.
 - Network or TLS exception: preserve the token and report that the environment is unavailable.
+
+Use `-Action Validate` only when the user explicitly requests token status without login. It remains read-only apart from clearing a token that the server explicitly rejects.
 
 ## Captcha and login
 
 Keep the full unauthenticated login exchange in one persistent PowerShell worker process. The worker must call `common_cfg_request`, call `puc_get_captcha`, keep the PUC ID, captcha ID, and HTTP session in memory, display a local captcha-entry dialog, then call `login_puc_account` immediately after the user submits. Do not send captcha text through chat or reconstruct the login in another process.
 
-Run the interactive login after token validation reports `reason: missing`. Before fetching the captcha, obtain write permission for the authoritative configuration root and GUI permission for the visible desktop session. Do not log in through a temporary config copy and later synchronize the token.
+`Ensure` runs the interactive login automatically after token validation reports `reason: missing` or `reason: rejected`. Before fetching the captcha, obtain write permission for the authoritative configuration root and GUI permission for the visible desktop session. These are host runtime approvals, not business-confirmation prompts. Do not log in through a temporary config copy and later synchronize the token.
 
 ```powershell
 <skill>\scripts\Invoke-PucScript.cmd Invoke-PucAuth.ps1 -Action InteractiveLogin -Environment <environment>
@@ -86,6 +90,6 @@ The worker displays the captcha in a local topmost window with an input field, a
 
 Keep the captcha value, captcha ID, and HTTP state only in worker memory. On success, let the worker write the returned token and PUC ID into the selected environment in `config.json`, then remove worker metadata and temporary artifacts. Retain `Captcha` and `Login` only for compatibility; do not use their chat-mediated two-step flow for normal operation.
 
-Authentication uses `Invoke-PucJsonRequest` and the bundled Node transport. Do not diagnose PowerShell Schannel by creating a loopback proxy; the transport supports modern TLS without listening on a port. Cookie state remains in the login worker and is passed to the transport only as request headers through stdin.
+All PUC workflows use the bundled Node transport. Do not diagnose PowerShell Schannel by creating a loopback proxy or a sandboxed `curl` probe; the transport supports modern TLS without listening on a port. Cookie state remains in the login worker and is passed to the transport only as request headers through stdin.
 
-On a rejected login or request exception, report the sanitized server result code, HTTP status, and error message when available, then stop. Do not automatically start another worker, fetch another captcha, or retry the login. Wait until the user explicitly asks to continue.
+On a rejected interactive login or request exception, show the complete structured server response with only credential fields redacted when available, then stop. Do not automatically start another worker, fetch another captcha, or retry the login. Wait until the user explicitly asks to continue.

@@ -33,34 +33,11 @@ if ($PlanOnly) {
 $root = Get-PucConfigRoot $ConfigRoot
 $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
 if ([string]::IsNullOrWhiteSpace($EndpointOverride)) {
-    $validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Validate -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
+    $validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Ensure -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
     if ($validation.valid -ne $true) { throw "Saved token is not usable ($($validation.reason)). Complete the login workflow first." }
     $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
 }
 $endpoint = if ([string]::IsNullOrWhiteSpace($EndpointOverride)) { $environmentConfig.baseUrl.TrimEnd('/') + '/confs' } else { $EndpointOverride }
-
-Add-Type -AssemblyName System.Net.Http
-$oldCertificateCallback = [Net.ServicePointManager]::ServerCertificateValidationCallback
-$certificateCallbackChanged = $false
-if ($environmentConfig.allowInsecureTls -eq $true) {
-    if ($null -eq ('PucIncidentTls' -as [type])) {
-        Add-Type -TypeDefinition @'
-using System.Net.Security;
-using System.Security.Cryptography.X509Certificates;
-public static class PucIncidentTls {
-    public static bool Accept(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors errors) { return true; }
-    public static readonly RemoteCertificateValidationCallback Callback = Accept;
-}
-'@
-    }
-    [Net.ServicePointManager]::ServerCertificateValidationCallback = [PucIncidentTls]::Callback
-    $certificateCallbackChanged = $true
-}
-$handler = [Net.Http.HttpClientHandler]::new()
-$client = [Net.Http.HttpClient]::new($handler)
-$client.Timeout = [TimeSpan]::FromSeconds(60)
-$client.DefaultRequestHeaders.Accept.ParseAdd('application/json, text/plain, */*')
-$client.DefaultRequestHeaders.Add('token',[string]$environmentConfig.token)
 
 function Get-ResponseProperty($Object,[string]$Name,$Default=$null) {
     if ($null -eq $Object) { return $Default }
@@ -69,26 +46,17 @@ function Get-ResponseProperty($Object,[string]$Name,$Default=$null) {
     return $property.Value
 }
 
-function ConvertFrom-HttpResponse([Net.Http.HttpResponseMessage]$Response,[string]$Operation) {
-    $text=$Response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-    if (-not $Response.IsSuccessStatusCode) { throw "$Operation failed: HTTP $([int]$Response.StatusCode). No retry was attempted." }
-    if ([string]::IsNullOrWhiteSpace($text)) { throw "$Operation returned an empty response. No retry was attempted." }
-    try { $value=$text|ConvertFrom-Json } catch { throw "$Operation returned invalid JSON. No retry was attempted." }
-    $value=ConvertFrom-PucResponseEncoding -Value $value
+function Assert-IncidentResponse($Value,[string]$Operation) {
+    if ($null -eq $Value) { throw "$Operation returned an empty response. No retry was attempted." }
     $result=Get-ResponseProperty $value 'result' $null
     if ($null -eq $result) { throw "$Operation response did not contain result. No retry was attempted." }
-    if ([string]$result -ne '0') { throw "$Operation failed: result=$result; msg=$([string](Get-ResponseProperty $value 'msg' '')). No retry was attempted." }
+    if ([string]$result -ne '0') { throw (New-PucApiFailureMessage -Operation $Operation -Response $value) }
     return $value
 }
 
 function Invoke-JsonRequest([hashtable]$Body) {
-    [byte[]]$bytes=ConvertTo-PucJsonBytes -Value $Body -Depth 30
-    $content=[Net.Http.ByteArrayContent]::new($bytes)
-    try {
-        $content.Headers.ContentType=[Net.Http.Headers.MediaTypeHeaderValue]::Parse('application/json; charset=utf-8')
-        $response=$client.PostAsync($endpoint,$content).GetAwaiter().GetResult()
-        try { return ConvertFrom-HttpResponse $response ([string]$Body.cmd_name) } finally { $response.Dispose() }
-    } finally { $content.Dispose() }
+    $response=Invoke-PucJsonRequest -Uri ([uri]$endpoint) -Body $Body -Headers @{token=[string]$environmentConfig.token} -AllowInsecureTls ([bool]$environmentConfig.allowInsecureTls) -TimeoutSec 60 -Depth 30
+    return Assert-IncidentResponse $response ([string]$Body.cmd_name)
 }
 
 function Get-AllTones {
@@ -119,37 +87,19 @@ function New-CurrentPreview {
     return New-PucIncidentAlarmLevelPreview -Environment $Environment -Assets $assets -Tones @(Get-AllTones) -ExistingLevels @(Get-AllLevels)
 }
 
-function Add-TextPart([Net.Http.MultipartFormDataContent]$Form,[string]$Name,[string]$Value) {
-    $part=[Net.Http.StringContent]::new($Value,[Text.Encoding]::UTF8)
-    $Form.Add($part,$Name)
-}
-
 function Invoke-CreateLevel($Item) {
-    $form=[Net.Http.MultipartFormDataContent]::new()
-    $stream=$null
-    try {
-        $stream=[IO.File]::OpenRead($Item.ZipPath)
-        $file=[Net.Http.StreamContent]::new($stream)
-        $file.Headers.ContentType=[Net.Http.Headers.MediaTypeHeaderValue]::Parse('application/x-zip-compressed')
-        $form.Add($file,'icon_zip_file',$Item.ZipFileName)
-        Add-TextPart $form 'cmd_guid' ([guid]::NewGuid().ToString())
-        Add-TextPart $form 'cmd_name' 'taskmgr_add_police_incident_alarm_level'
-        Add-TextPart $form 'puc_id' ([string]$environmentConfig.pucId)
-        Add-TextPart $form 'realm' ([string]$environmentConfig.realm)
-        Add-TextPart $form 'user_id' ([string]$environmentConfig.adminAccount)
-        Add-TextPart $form 'level_code' $Item.Code
-        Add-TextPart $form 'level_name' $Item.Name
-        Add-TextPart $form 'level_desc' $Item.Description
-        Add-TextPart $form 'icon_color' $Item.Color
-        Add-TextPart $form 'icon_zip_name' $Item.ZipFileName
-        Add-TextPart $form 'tone_id' $Item.Tone
-        $response=$client.PostAsync($endpoint,$form).GetAwaiter().GetResult()
-        try { return ConvertFrom-HttpResponse $response 'taskmgr_add_police_incident_alarm_level' } finally { $response.Dispose() }
-    } finally { $form.Dispose();if($null-ne$stream){$stream.Dispose()} }
+    $multipart=New-PucMultipartFormData -Fields ([ordered]@{
+        cmd_guid=[guid]::NewGuid().ToString();cmd_name='taskmgr_add_police_incident_alarm_level'
+        puc_id=[string]$environmentConfig.pucId;realm=[string]$environmentConfig.realm;user_id=[string]$environmentConfig.adminAccount
+        level_code=$Item.Code;level_name=$Item.Name;level_desc=$Item.Description;icon_color=$Item.Color;icon_zip_name=$Item.ZipFileName;tone_id=$Item.Tone
+    }) -Files @([pscustomobject]@{Name='icon_zip_file';FileName=$Item.ZipFileName;ContentType='application/x-zip-compressed';Bytes=[IO.File]::ReadAllBytes($Item.ZipPath)})
+    $envelope=Invoke-PucHttpRequest -Method POST -Uri ([uri]$endpoint) -Headers @{
+        Accept='application/json, text/plain, */*';token=[string]$environmentConfig.token;'Content-Type'=$multipart.ContentType
+    } -Body $multipart.BodyBytes -AllowInsecureTls ([bool]$environmentConfig.allowInsecureTls) -TimeoutSec 60
+    return Assert-IncidentResponse (ConvertFrom-PucJsonHttpResponse -Response $envelope) 'taskmgr_add_police_incident_alarm_level'
 }
 
-try {
-    $preview=New-CurrentPreview
+$preview=New-CurrentPreview
     if($DryRun){$preview|ConvertTo-Json -Depth 12 -Compress;return}
     if(-not[string]::Equals($preview.PreviewHash,$ExpectedPreviewHash,[StringComparison]::OrdinalIgnoreCase)){throw 'Incident alarm-level state or assets changed after preview. Run DryRun again before configuring.'}
     $results=[Collections.Generic.List[object]]::new();$failed=$false
@@ -173,8 +123,4 @@ try {
         $record=$matches[0];$toneInfo=Get-ResponseProperty $record 'toneInfo' $null
         if([string](Get-ResponseProperty $record 'level_desc' '') -cne $target.Description -or [string](Get-ResponseProperty $record 'icon_color' '').ToUpperInvariant() -cne $target.Color.ToUpperInvariant() -or [string](Get-ResponseProperty $record 'icon_zip_name' '') -cne $target.ZipFileName -or [string](Get-ResponseProperty $toneInfo 'file_name' '') -cne $target.Tone){throw 'Created incident alarm level did not match the fixed configuration during final verification. No retry was attempted.'}
     }
-    [pscustomobject]@{status='configured';action='ConfigureIncidentAlarmLevels';environment=$Environment;previewHash=$preview.PreviewHash;results=@($results);writesUsed=@($results|Where-Object status -eq 'created').Count;verified=$true}|ConvertTo-Json -Depth 12 -Compress
-} finally {
-    $client.Dispose();$handler.Dispose()
-    if ($certificateCallbackChanged) { [Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCertificateCallback }
-}
+[pscustomobject]@{status='configured';action='ConfigureIncidentAlarmLevels';environment=$Environment;previewHash=$preview.PreviewHash;results=@($results);writesUsed=@($results|Where-Object status -eq 'created').Count;verified=$true}|ConvertTo-Json -Depth 12 -Compress

@@ -25,7 +25,7 @@ Import-Module (Join-Path $PSScriptRoot 'PucConfig.psm1') -Force
 $root = Get-PucConfigRoot $ConfigRoot
 $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
 if (-not $PlanOnly) {
-    $validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Validate -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
+    $validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Ensure -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
     if ($validation.valid -ne $true) { throw "Saved token is not usable ($($validation.reason)). Complete the login workflow first." }
     $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
 }

@@ -9,22 +9,6 @@ param(
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'PucConfig.psm1') -Force
 $config = Get-Content -Raw -LiteralPath $ConfigPath | ConvertFrom-Json
-$script:originalCertificateCallback = $null
-$script:certificateCallbackChanged = $false
-
-function Restore-CertificateCallback {
-    if ($script:certificateCallbackChanged) {
-        [Net.ServicePointManager]::ServerCertificateValidationCallback = $script:originalCertificateCallback
-        $script:certificateCallbackChanged = $false
-    }
-}
-trap { Restore-CertificateCallback; throw $_ }
-
-if ($config.allowInsecureTls -eq $true -and -not (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
-    $script:originalCertificateCallback = [Net.ServicePointManager]::ServerCertificateValidationCallback
-    [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-    $script:certificateCallbackChanged = $true
-}
 
 foreach ($name in @('ipSuffix','startSequence','count','reportDirectory')) {
     if ($null -eq $config.$name -or [string]::IsNullOrWhiteSpace([string]$config.$name)) { throw "Required configuration value is missing: $name" }
@@ -104,7 +88,7 @@ function Expand-Template($value, [hashtable]$variables) {
     return $expanded
 }
 
-$session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$cookieJar = @{}
 $authHeader = @{}
 function Invoke-Operation([string]$name, [hashtable]$variables) {
     $operation = $adapter.operations.$name
@@ -112,25 +96,15 @@ function Invoke-Operation([string]$name, [hashtable]$variables) {
     $headers = @{}
     foreach ($property in $operation.headers.PSObject.Properties) { $headers[$property.Name] = Expand-Template $property.Value $variables }
     foreach ($key in $authHeader.Keys) { $headers[$key] = $authHeader[$key] }
-    $params = @{ Method=$operation.method; Uri=$config.baseUrl.TrimEnd('/') + $operation.path; Headers=$headers; WebSession=$session; ContentType='application/json; charset=utf-8' }
     $body = Expand-Template $operation.bodyTemplate $variables
-    if ($null -ne $body) {
-        [byte[]]$jsonBody = ConvertTo-PucJsonBytes -Value $body -Depth 50
-        $params.Body = $jsonBody
-    }
-    if ($config.allowInsecureTls -eq $true -and (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) { $params.SkipCertificateCheck = $true }
     $maxRetries = if ($name -in @('createPersonnel','createExactPersonnel')) { 0 } elseif ($null -ne $config.maxReadRetries) { [int]$config.maxReadRetries } else { 0 }
     for ($attempt = 0; ; $attempt++) {
-        try { return ConvertFrom-PucResponseEncoding -Value (Invoke-RestMethod @params) } catch {
+        try {
+            return Invoke-PucJsonHttpRequest -Method ([string]$operation.method) -Uri ([uri]($config.baseUrl.TrimEnd('/') + $operation.path)) -Headers $headers -Body $body -AllowInsecureTls ([bool]$config.allowInsecureTls) -TimeoutSec 60 -CookieJar $cookieJar -Depth 50
+        } catch {
             if ($attempt -ge $maxRetries) {
-                $responseBody = $null
-                if ($_.Exception.Response) { try { $reader=New-Object IO.StreamReader($_.Exception.Response.GetResponseStream()); $responseBody=$reader.ReadToEnd(); $reader.Dispose() } catch {} }
-                if ($responseBody) { throw "$($_.Exception.Message) Response: $responseBody" }
                 throw
             }
-            $statusCode = $null
-            if ($_.Exception.Response) { try { $statusCode = [int]$_.Exception.Response.StatusCode } catch {} }
-            if ($null -ne $statusCode -and $statusCode -notin @(408,429) -and $statusCode -lt 500) { throw }
             Start-Sleep -Milliseconds ([Math]::Min(5000, 500 * [Math]::Pow(2, $attempt)))
         }
     }
@@ -153,7 +127,7 @@ if ([string]::IsNullOrWhiteSpace($token)) {
     $captchaValue = Get-EnvironmentValue $config.captchaValueEnv
     if ([string]::IsNullOrWhiteSpace($captchaValue)) { $captchaValue = Read-Host 'Enter the captcha shown in the image' }
     $login = Invoke-Operation 'login' @{ username=$adminUser; password=$adminPassword; realm=$config.realm; pucId=$config.pucId; captchaId=$captchaId; captchaValue=$captchaValue }
-    if ([string](Get-PropertyPath $login $adapter.operations.login.selectors.success) -ne [string]$adapter.operations.login.selectors.successExpected) { throw 'Login API response reported failure.' }
+    if ([string](Get-PropertyPath $login $adapter.operations.login.selectors.success) -ne [string]$adapter.operations.login.selectors.successExpected) { throw (New-PucApiFailureMessage -Operation 'Login API' -Response $login) }
     $token = Get-PropertyPath $login $adapter.token.responsePath
 }
 if ([string]::IsNullOrWhiteSpace($token)) { throw 'Authentication did not return a token.' }
@@ -232,7 +206,7 @@ while ($created -lt [int]$config.count) {
         try {
             $createOperation = if (-not [string]::IsNullOrWhiteSpace([string]$config.exactAlias)) { 'createExactPersonnel' } else { 'createPersonnel' }
             $response = Invoke-Operation $createOperation @{ username=$adminUser; realm=$config.realm; pucId=$config.pucId; commandGuid=[guid]::NewGuid().ToString(); officerId=$person.officerId; alias=$person.alias; policeTypeGuid=$config.policeTypeGuid; organizationId=$organizationId; organizationName=$organizationName; idNumber=$person.idNumber; mobile=$person.mobile; dispatcherAccount=$dispatcherAccountValue; dispatcherName=$dispatcherNameValue }
-            if ([string](Get-PropertyPath $response $adapter.operations.$createOperation.selectors.success) -ne [string]$adapter.operations.$createOperation.selectors.successExpected) { throw "API response reported failure: $($response | ConvertTo-Json -Compress)" }
+            if ([string](Get-PropertyPath $response $adapter.operations.$createOperation.selectors.success) -ne [string]$adapter.operations.$createOperation.selectors.successExpected) { throw (New-PucApiFailureMessage -Operation $createOperation -Response $response) }
             $results.Add([pscustomobject]@{ sequence=$sequence; alias=$person.alias; dispatcherAccount=$dispatcherAccountValue; officerId=$person.officerId; idNumber=$person.idNumber; mobile=$person.mobile; status='created'; reason='' })
             $created++
         } catch {
@@ -246,4 +220,3 @@ while ($created -lt [int]$config.count) {
 }
 
 Write-Results $results
-Restore-CertificateCallback

@@ -38,6 +38,19 @@ const server = http.createServer((request, response) => {
   request.on('data', (chunk) => chunks.push(chunk));
   request.on('end', () => {
     if (request.url === '/health') return send(response, { ok: true }, { 'set-cookie': ['session=abc; Path=/'] });
+    if (request.url === '/binary') {
+      const body = Buffer.from([0, 1, 2, 253, 254, 255]);
+      response.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': body.length });
+      return response.end(body);
+    }
+    if (request.url === '/multipart') {
+      const raw = Buffer.concat(chunks);
+      return send(response, {
+        contentType: request.headers['content-type'] || '',
+        hasField: raw.includes(Buffer.from('name="alpha"')) && raw.includes(Buffer.from('value-one')),
+        hasFile: raw.includes(Buffer.from('name="upload"; filename="sample.bin"')) && raw.includes(Buffer.from([0, 1, 2, 253, 254, 255])),
+      });
+    }
     if (request.url === '/writes') return send(response, { writes, policyQueries });
     if (request.url !== '/confs') return send(response, { result: 404, msg: 'not found' });
     let body;

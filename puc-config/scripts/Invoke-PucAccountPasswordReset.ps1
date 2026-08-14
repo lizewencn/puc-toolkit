@@ -27,7 +27,7 @@ if ($PlanOnly) {
 }
 
 $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
-$validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Validate -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
+$validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Ensure -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
 if ($validation.valid -ne $true) { throw "Saved token is not usable ($($validation.reason)). Complete the login workflow first." }
 $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
 $baseUri = [uri]$environmentConfig.baseUrl
@@ -42,7 +42,7 @@ function Invoke-PucAccountRequest([hashtable]$Body) {
     $response = Invoke-PucJsonRequest -Uri ([uri]($baseUri.AbsoluteUri.TrimEnd('/') + '/confs')) -Body $Body -Headers @{token=[string]$environmentConfig.token} -AllowInsecureTls ([bool]$environmentConfig.allowInsecureTls) -TimeoutSec 60 -Depth 60
     if ($null -eq $response) { throw "$($Body.cmd_name) returned an empty response. No retry was attempted." }
     if ($null -ne $response.PSObject.Properties['result'] -and [string]$response.result -ne '0') {
-        throw "$($Body.cmd_name) failed: result=$([string]$response.result); msg=$([string](Get-PropertyValue $response 'msg' '')). No retry was attempted."
+        throw (New-PucApiFailureMessage -Operation ([string]$Body.cmd_name) -Response $response)
     }
     return $response
 }

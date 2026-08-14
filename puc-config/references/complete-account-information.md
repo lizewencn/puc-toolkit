@@ -24,7 +24,7 @@ Use exactly one target in preview mode:
 
 The same workflow handles a one-item batch. Do not fall back to a hand-written loop or temporary audit script.
 
-## Preview and confirmation
+## Preview and authorization
 
 Preview one account:
 
@@ -48,11 +48,14 @@ Preview a prefix batch:
 
 Use `-NormalizeGeneratedAlias` only after the user requests display names in `<account>_alias` form. The preview performs the authenticated baseline reads once, discovers all targets, invokes the verified single-account update preview for every incomplete account, and atomically writes a manifest containing changes and snapshot hashes but no password cipher or token.
 
-Show the exact environment, target mode, complete account list, baseline summary, per-account field changes, and snapshot hashes. Require one explicit confirmation covering exactly that manifest. Do not expose full access-point GUID payloads in chat; summarize their count.
+Show the exact environment, target mode, complete account list, baseline summary, per-account field changes, and snapshot hashes. Do not expose full access-point GUID payloads in chat; summarize their count.
+
+- For `-Account`, treat the user's explicit instruction naming that exact environment and account as confirmation. Continue to live execution after a successful preview without asking again.
+- For `-Query`, the prefix discovers a target set the user did not enumerate. Require one explicit confirmation covering exactly the displayed manifest.
 
 ## Live execution
 
-After confirmation, execute:
+After authorization under the rule above, execute:
 
 ```powershell
 <skill>\scripts\Invoke-PucScript.cmd Invoke-PucAccountCompletion.ps1 `

@@ -9,26 +9,6 @@ param(
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'PucConfig.psm1') -Force
 $config = Get-Content -Raw -LiteralPath $ConfigPath | ConvertFrom-Json
-$script:originalCertificateCallback = $null
-$script:certificateCallbackChanged = $false
-
-function Restore-CertificateCallback {
-    if ($script:certificateCallbackChanged) {
-        [Net.ServicePointManager]::ServerCertificateValidationCallback = $script:originalCertificateCallback
-        $script:certificateCallbackChanged = $false
-    }
-}
-
-trap {
-    Restore-CertificateCallback
-    throw $_
-}
-
-if ($config.allowInsecureTls -eq $true -and -not (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
-    $script:originalCertificateCallback = [Net.ServicePointManager]::ServerCertificateValidationCallback
-    [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-    $script:certificateCallbackChanged = $true
-}
 
 foreach ($name in @('startSequence','count','accountPrefix')) {
     if ($null -eq $config.$name -or [string]::IsNullOrWhiteSpace([string]$config.$name)) {
@@ -142,7 +122,7 @@ function Expand-Template($value, [hashtable]$variables) {
     return $expanded
 }
 
-$session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$cookieJar = @{}
 $authHeader = @{}
 
 function Invoke-Operation([string]$name, [hashtable]$variables) {
@@ -155,49 +135,14 @@ function Invoke-Operation([string]$name, [hashtable]$variables) {
     }
     foreach ($key in $authHeader.Keys) { $headers[$key] = $authHeader[$key] }
     $body = Expand-Template $operation.bodyTemplate $variables
-    $params = @{
-        Method = $operation.method
-        Uri = $uri
-        Headers = $headers
-        WebSession = $session
-        ContentType = 'application/json; charset=utf-8'
-    }
-    if ($config.allowInsecureTls -eq $true) {
-        if ((Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
-            $params.SkipCertificateCheck = $true
-        }
-    }
-    if ($null -ne $body) {
-        [byte[]]$jsonBody = ConvertTo-PucJsonBytes -Value $body -Depth 50
-        $params.Body = $jsonBody
-    }
     $maxRetries = if ($name -eq 'createAccount') { 0 } elseif ($null -ne $config.maxReadRetries) { [int]$config.maxReadRetries } else { 0 }
     for ($attempt = 0; ; $attempt++) {
         try {
-            return ConvertFrom-PucResponseEncoding -Value (Invoke-RestMethod @params)
+            return Invoke-PucJsonHttpRequest -Method ([string]$operation.method) -Uri ([uri]$uri) -Headers $headers -Body $body -AllowInsecureTls ([bool]$config.allowInsecureTls) -TimeoutSec 60 -CookieJar $cookieJar -Depth 50
         } catch {
             if ($attempt -ge $maxRetries) {
-                $responseBody = $null
-                if ($_.Exception.Response) {
-                    try {
-                        $stream = $_.Exception.Response.GetResponseStream()
-                        if ($stream) {
-                            $reader = New-Object IO.StreamReader($stream)
-                            $responseBody = $reader.ReadToEnd()
-                            $reader.Dispose()
-                        }
-                    } catch { $responseBody = $null }
-                }
-                if (-not [string]::IsNullOrWhiteSpace($responseBody)) {
-                    throw "$($_.Exception.Message) Response: $responseBody"
-                }
                 throw
             }
-            $statusCode = $null
-            if ($_.Exception.Response) {
-                try { $statusCode = [int]$_.Exception.Response.StatusCode } catch { $statusCode = $null }
-            }
-            if ($null -ne $statusCode -and $statusCode -notin @(408, 429) -and $statusCode -lt 500) { throw }
             Start-Sleep -Milliseconds ([Math]::Min(5000, 500 * [Math]::Pow(2, $attempt)))
         }
     }
@@ -249,7 +194,7 @@ if ([string]::IsNullOrWhiteSpace($token)) {
     if ($loginSuccessPath) {
         $loginSuccess = Get-PropertyPath $loginResponse $loginSuccessPath
         $loginExpected = $adapter.operations.login.selectors.successExpected
-        if ([string]$loginSuccess -ne [string]$loginExpected) { throw 'Login API response reported failure.' }
+        if ([string]$loginSuccess -ne [string]$loginExpected) { throw (New-PucApiFailureMessage -Operation 'Login API' -Response $loginResponse) }
     }
     $token = Get-PropertyPath $loginResponse $adapter.token.responsePath
 }
@@ -341,7 +286,7 @@ function Get-AllMatchingAccounts([string]$query, [switch]$RequireLargeResultConf
             realm=$config.realm; username=$adminUser
         }
         if ($null -ne $response.PSObject.Properties['result'] -and [string]$response.result -ne '0') {
-            throw "Account lookup for '$query' failed: result=$([string]$response.result); msg=$([string]$response.msg)"
+            throw (New-PucApiFailureMessage -Operation "Account lookup for '$query'" -Response $response)
         }
         $rawRows = Get-PropertyPath $response (Get-Selector 'searchAccounts' 'rows')
         $rows = if ($null -eq $rawRows) { @() } else { @($rawRows) }
@@ -465,7 +410,7 @@ if ($DryRun) {
             $successExpected = $adapter.operations.createAccount.selectors.successExpected
             if ($null -eq $successExpected) { $successExpected = $adapter.selectors.successExpected }
             if ($null -eq $successExpected) { $successExpected = $true }
-            if ($null -eq $success -or [string]$success -ne [string]$successExpected) { throw 'API response reported failure' }
+            if ($null -eq $success -or [string]$success -ne [string]$successExpected) { throw (New-PucApiFailureMessage -Operation 'add_account' -Response $response) }
             $results.Add([pscustomobject]@{
                 sequence=$candidate.sequence; account=$candidate.account; alias=$candidate.alias; dispatchNumber=$candidate.dispatchNumber
                 role=$candidate.role; roleGuid=$candidate.roleGuid; roleSelection=$candidate.roleSelection; status='created'; reason=''
@@ -484,4 +429,3 @@ if ($DryRun) {
 }
 
 Write-Results $results
-Restore-CertificateCallback

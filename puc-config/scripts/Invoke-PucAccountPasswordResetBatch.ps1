@@ -104,7 +104,7 @@ function Get-RequestedAccounts([string]$Path) {
 
 function Get-MatchingAccounts([string]$AccountQuery) {
     $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
-    $validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Validate -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
+    $validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Ensure -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
     if ($validation.valid -ne $true) { throw "Saved token is not usable ($($validation.reason)). Complete the login workflow first." }
     $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
     $baseUri = [uri]$environmentConfig.baseUrl
@@ -117,8 +117,9 @@ function Get-MatchingAccounts([string]$AccountQuery) {
                 page_sizes=30; page_index=$pageIndex; querykey=$AccountQuery; lock_query=0; filter=[ordered]@{by_role='';by_state=0}
             }
             $response = Invoke-PucJsonRequest -Uri ([uri]($baseUri.AbsoluteUri.TrimEnd('/') + '/confs')) -Body $body -Headers @{token=[string]$environmentConfig.token} -AllowInsecureTls ([bool]$environmentConfig.allowInsecureTls) -TimeoutSec 60 -Depth 60
-            if ($null -eq $response -or [string](Get-PropertyValue $response 'result' '') -ne '0') {
-                throw "Account discovery failed on page $pageIndex. No retry was attempted."
+            if ($null -eq $response) { throw "Account discovery failed on page $pageIndex with an empty response. No retry was attempted." }
+            if ([string](Get-PropertyValue $response 'result' '') -ne '0') {
+                throw (New-PucApiFailureMessage -Operation "Account discovery on page $pageIndex" -Response $response)
             }
             foreach ($row in @((Get-PropertyValue $response 'account_list' @()))) {
                 $account = [string](Get-PropertyValue $row 'dispatcher_account' '')

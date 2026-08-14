@@ -4,6 +4,9 @@ param([ValidateSet('Definitions','ZipValidation','Preview','Module','Command','L
 $ErrorActionPreference = 'Stop'
 $skillRoot = Split-Path -Parent $PSScriptRoot
 $modulePath = Join-Path $skillRoot 'scripts\PucIncidentAlarmLevels.psm1'
+$bundledPython = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
+$pythonCommand = Get-Command python.exe,python -ErrorAction SilentlyContinue | Where-Object { $_.Source -notlike '*\WindowsApps\*' } | Select-Object -First 1
+$python = if(-not[string]::IsNullOrWhiteSpace($env:PUC_PYTHON_EXE)-and(Test-Path -LiteralPath $env:PUC_PYTHON_EXE)){$env:PUC_PYTHON_EXE}elseif($pythonCommand){$pythonCommand.Source}elseif(Test-Path -LiteralPath $bundledPython){$bundledPython}else{throw 'Python test runtime was not found. Set PUC_PYTHON_EXE to python.exe.'}
 
 function Assert-Equal($Actual, $Expected, [string]$Message) {
     if ([string]$Actual -cne [string]$Expected) { throw "$Message. Expected '$Expected', got '$Actual'." }
@@ -61,6 +64,18 @@ function New-TestZip([string]$Path, [hashtable]$Entries) {
             }
         } finally { $archive.Dispose() }
     } finally { $stream.Dispose() }
+}
+
+function Initialize-TestIncidentAssets {
+    $directory=Join-Path $skillRoot 'assets\incident'
+    if(Test-Path -LiteralPath $directory -PathType Container){return $false}
+    New-Item -ItemType Directory -Path $directory|Out-Null
+    foreach($name in @(
+        (ConvertFrom-CodePoints 0x661f,0x6807),
+        (ConvertFrom-CodePoints 0x9ec4,0x6807),
+        (ConvertFrom-CodePoints 0x666e,0x901a)
+    )){New-TestZip (Join-Path $directory ($name+'.zip')) @{'icon.svg'='<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>'}}
+    return $true
 }
 
 function Test-ZipValidation {
@@ -139,7 +154,7 @@ function Test-LiveFlow {
     New-Item -ItemType Directory -Path $configRoot|Out-Null
     $config=[ordered]@{version=1;environments=@([ordered]@{name='fake';baseUrl="http://127.0.0.1:$port";realm='puc.com';adminAccount='admin';adminPassword='';newAccountPassword='';token='test-token';pucId='00001';allowInsecureTls=$false})}
     $config|ConvertTo-Json -Depth 10|Set-Content -LiteralPath (Join-Path $configRoot 'config.json') -Encoding UTF8
-    $server=Start-Process -FilePath python -ArgumentList @((Join-Path $PSScriptRoot 'incident_fake_server.py'),'--port',$port) -WindowStyle Hidden -PassThru
+    $server=Start-Process -FilePath $python -ArgumentList @((Join-Path $PSScriptRoot 'incident_fake_server.py'),'--port',$port) -WindowStyle Hidden -PassThru
     try {
         $ready=$false
         for($i=0;$i-lt 30;$i++){try{$tcp=[Net.Sockets.TcpClient]::new();$tcp.Connect('127.0.0.1',$port);$tcp.Dispose();$ready=$true;break}catch{Start-Sleep -Milliseconds 100}}
@@ -165,16 +180,21 @@ function Test-LiveFlow {
     }
 }
 
-$cases = if ($Case -eq 'All') { @('Definitions','ZipValidation','Preview','Command','LiveFlow','SkillRouting') } elseif ($Case -eq 'Module') { @('Definitions','ZipValidation','Preview') } else { @($Case) }
-foreach ($name in $cases) {
-    switch ($name) {
-        'Definitions' { Test-Definitions }
-        'ZipValidation' { Test-ZipValidation }
-        'Preview' { Test-Preview }
-        'Command' { Test-Command }
-        'LiveFlow' { Test-LiveFlow }
-        'SkillRouting' { Test-SkillRouting }
-        default { throw "Test case '$name' is not implemented yet." }
+$createdTestAssets=Initialize-TestIncidentAssets
+try {
+    $cases = if ($Case -eq 'All') { @('Definitions','ZipValidation','Preview','Command','LiveFlow','SkillRouting') } elseif ($Case -eq 'Module') { @('Definitions','ZipValidation','Preview') } else { @($Case) }
+    foreach ($name in $cases) {
+        switch ($name) {
+            'Definitions' { Test-Definitions }
+            'ZipValidation' { Test-ZipValidation }
+            'Preview' { Test-Preview }
+            'Command' { Test-Command }
+            'LiveFlow' { Test-LiveFlow }
+            'SkillRouting' { Test-SkillRouting }
+            default { throw "Test case '$name' is not implemented yet." }
+        }
+        Write-Output "PASS $name"
     }
-    Write-Output "PASS $name"
+} finally {
+    if($createdTestAssets){Remove-Item -LiteralPath (Join-Path $skillRoot 'assets\incident') -Recurse -Force}
 }

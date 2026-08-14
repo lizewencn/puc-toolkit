@@ -123,32 +123,17 @@ if ($PlanOnly) {
     return
 }
 
-$validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Validate -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
+$validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Ensure -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
 if ($validation.valid -ne $true) { throw "Saved token is not usable ($($validation.reason)). Complete the login workflow first." }
 $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
 $baseUri = [uri]$environmentConfig.baseUrl
-$oldCallback = [Net.ServicePointManager]::ServerCertificateValidationCallback
-$callbackChanged = $false
-if ($environmentConfig.allowInsecureTls -eq $true -and -not (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
-    [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-    $callbackChanged = $true
-}
 
 function Invoke-PucAccountRequest([hashtable]$Body) {
-    [byte[]]$jsonBody = ConvertTo-PucJsonBytes -Value $Body -Depth 40
-    $params = @{
-        Method='POST'; Uri=$baseUri.AbsoluteUri.TrimEnd('/') + '/confs'; ContentType='application/json; charset=utf-8'
-        Headers=@{ Accept='application/json, text/plain, */*'; token=[string]$environmentConfig.token }
-        Body=$jsonBody; TimeoutSec=60
-    }
-    if ($environmentConfig.allowInsecureTls -eq $true -and (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
-        $params.SkipCertificateCheck = $true
-    }
-    $response = ConvertFrom-PucResponseEncoding -Value (Invoke-RestMethod @params)
+    $response = Invoke-PucJsonRequest -Uri ([uri]($baseUri.AbsoluteUri.TrimEnd('/') + '/confs')) -Body $Body -Headers @{token=[string]$environmentConfig.token} -AllowInsecureTls ([bool]$environmentConfig.allowInsecureTls) -TimeoutSec 60 -Depth 40
     if ($null -eq $response) { throw "$($Body.cmd_name) returned an empty response. No retry was attempted." }
     $resultProperty = @($response.PSObject.Properties.Match('result')) | Select-Object -First 1
     if ($null -ne $resultProperty -and [string]$resultProperty.Value -ne '0') {
-        throw "$($Body.cmd_name) failed: result=$([string]$resultProperty.Value); msg=$([string](Get-PropertyValue $response 'msg' '')). No retry was attempted."
+        throw (New-PucApiFailureMessage -Operation ([string]$Body.cmd_name) -Response $response)
     }
     return $response
 }
@@ -235,8 +220,7 @@ function New-ChangeSummary($Record) {
     return @($items)
 }
 
-try {
-    $record = Get-ExactAccount
+$record = Get-ExactAccount
     $state = New-UpdateState $record
     $summary = New-ChangeSummary $record
     if ($DryRun) {
@@ -271,6 +255,3 @@ try {
         snapshotHash=$state.SnapshotHash; changedFields=@($normalizedChanges.Keys); accountResult=[string]$updateResponse.result
         mfaUpdated=$mfaUpdated; refreshed=$true
     } | ConvertTo-Json -Depth 10 -Compress
-} finally {
-    if ($callbackChanged) { [Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCallback }
-}

@@ -26,7 +26,7 @@ Then run the authenticated preview. It queries `account_list_request`, requires 
   -DryRun
 ```
 
-Show the environment, exact account, requested field changes, and snapshot hash. Require explicit confirmation of those values. Then run the live update with the returned hash:
+Show the environment, exact account, requested field changes, and snapshot hash. Treat the user's explicit instruction naming that environment, account, and change set as confirmation. After a successful preview, run the live update with the returned hash without asking again:
 
 ```powershell
 & <skill>\scripts\Invoke-PucAccountUpdate.ps1 `

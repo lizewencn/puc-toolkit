@@ -15,8 +15,8 @@ Use `scripts/Invoke-PucForceLogin.ps1` to inspect, enable, or disable the platfo
 3. Derive `neId` from the node and derive `neVersion` from `imageVersion` with dots removed. Never reuse example values or persist topology values in `config.json`.
 4. Call `/nmpuc/mml/getMoConfigByType` with the resolved type and version. Find the unique `FunctionSwitchs` MO and its command whose type is `QRY`.
 5. Call `/nmpuc/mml/sendMML` with that query command. Require outer `code: 0`, inner `Response.ErrorCode: "0"`, and one record with `Indx = 0` and `Key = "FORCE_LOGIN"`.
-6. For `Enable` or `Disable`, show the environment, resolved topology fields, current value, desired value, and exact fixed MML command. Explain the session effect and require explicit confirmation.
-7. Run the same arguments with `-Live -ConfirmLive`. If the value already matches, do not send `MOD`. Otherwise send one `MOD` request, never retry it, then run the query once more and require the desired value.
+6. For `Enable` or `Disable`, show the environment, resolved topology fields, current value, desired value, and exact fixed MML command. Explain the session effect. Treat the user's explicit instruction naming the exact environment and desired state as confirmation.
+7. After a successful dry run, run the same arguments with `-Live -ConfirmLive` without asking again. If the value already matches, do not send `MOD`. Otherwise send one `MOD` request, never retry it, then run the query once more and require the desired value.
 
 Run a read-only preflight:
 
@@ -27,7 +27,7 @@ Run a read-only preflight:
   -DryRun
 ```
 
-After confirmation, apply it:
+After the user's explicit enable/disable instruction and a successful dry run, apply it without another confirmation prompt:
 
 ```powershell
 & <skill>\scripts\Invoke-PucForceLogin.ps1 `

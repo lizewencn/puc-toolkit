@@ -125,7 +125,18 @@ function Invoke-PucHttpRequest {
         if ($process.ExitCode -ne 0) { throw $(if ($stderr.Trim()) { $stderr.Trim() } else { 'PUC HTTP transport failed without an error message.' }) }
         $result = $stdout | ConvertFrom-Json
         if ([int]$result.statusCode -lt 200 -or [int]$result.statusCode -ge 300) {
-            throw "PUC HTTP request failed: HTTP $([int]$result.statusCode) $([string]$result.statusMessage)."
+            $exception = [InvalidOperationException]::new("PUC HTTP request failed: HTTP $([int]$result.statusCode) $([string]$result.statusMessage).")
+            $exception.Data['PucHttpStatusCode'] = [int]$result.statusCode
+            $exception.Data['PucHttpStatusMessage'] = [string]$result.statusMessage
+            try {
+                $bodyBytes = [Convert]::FromBase64String([string]$result.bodyBase64)
+                if ($bodyBytes.Count -gt 0) {
+                    $bodyText = [Text.Encoding]::UTF8.GetString($bodyBytes)
+                    $bodyValue = ConvertFrom-PucResponseEncoding -Value ($bodyText | ConvertFrom-Json)
+                    $exception.Data['PucHttpResponsePreview'] = Format-PucApiResponsePreview -Response $bodyValue
+                }
+            } catch {}
+            throw $exception
         }
         $setCookie = @()
         if ($null -ne $result.headers -and $null -ne $result.headers.PSObject.Properties['set-cookie']) { $setCookie = @($result.headers.'set-cookie') }
@@ -147,13 +158,91 @@ function Invoke-PucJsonRequest {
         [hashtable]$CookieJar,
         [ValidateRange(2,100)][int]$Depth = 30
     )
-    $effectiveHeaders = @{ Accept='application/json, text/plain, */*'; 'Content-Type'='application/json; charset=utf-8' }
-    foreach ($key in $Headers.Keys) { $effectiveHeaders[[string]$key] = [string]$Headers[$key] }
-    $response = Invoke-PucHttpRequest -Method POST -Uri $Uri -Headers $effectiveHeaders -Body (ConvertTo-PucJsonBytes -Value $Body -Depth $Depth) -AllowInsecureTls $AllowInsecureTls -TimeoutSec $TimeoutSec -CookieJar $CookieJar
-    if ($null -eq $response.BodyBytes -or $response.BodyBytes.Count -eq 0) { return $null }
-    $text = [Text.Encoding]::UTF8.GetString($response.BodyBytes)
+    return Invoke-PucJsonHttpRequest -Method POST -Uri $Uri -Body $Body -Headers $Headers -AllowInsecureTls $AllowInsecureTls -TimeoutSec $TimeoutSec -CookieJar $CookieJar -Depth $Depth
+}
+
+function ConvertFrom-PucJsonHttpResponse {
+    param([AllowNull()]$Response)
+    if ($null -eq $Response -or $null -eq $Response.BodyBytes -or $Response.BodyBytes.Count -eq 0) { return $null }
+    $text = [Text.Encoding]::UTF8.GetString($Response.BodyBytes)
     try { return ConvertFrom-PucResponseEncoding -Value ($text | ConvertFrom-Json) }
     catch { throw "PUC response is not valid JSON: $($_.Exception.Message)" }
+}
+
+function Invoke-PucJsonHttpRequest {
+    param(
+        [Parameter(Mandatory)][ValidateSet('GET','POST','PUT','DELETE','HEAD')][string]$Method,
+        [Parameter(Mandatory)][uri]$Uri,
+        $Body,
+        [hashtable]$Headers = @{},
+        [bool]$AllowInsecureTls = $false,
+        [ValidateRange(1,300)][int]$TimeoutSec = 60,
+        [hashtable]$CookieJar,
+        [ValidateRange(2,100)][int]$Depth = 30
+    )
+    $effectiveHeaders = @{ Accept='application/json, text/plain, */*' }
+    foreach ($key in $Headers.Keys) { $effectiveHeaders[[string]$key] = [string]$Headers[$key] }
+    [byte[]]$bodyBytes = @()
+    if ($null -ne $Body) {
+        $effectiveHeaders['Content-Type'] = 'application/json; charset=utf-8'
+        $bodyBytes = ConvertTo-PucJsonBytes -Value $Body -Depth $Depth
+    }
+    $response = Invoke-PucHttpRequest -Method $Method -Uri $Uri -Headers $effectiveHeaders -Body $bodyBytes -AllowInsecureTls $AllowInsecureTls -TimeoutSec $TimeoutSec -CookieJar $CookieJar
+    return ConvertFrom-PucJsonHttpResponse -Response $response
+}
+
+function New-PucMultipartFormData {
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Fields,
+        [object[]]$Files = @()
+    )
+    $boundary = '----------------PucConfig' + [guid]::NewGuid().ToString('N')
+    $stream = [IO.MemoryStream]::new()
+    try {
+        foreach ($entry in $Fields.GetEnumerator()) {
+            $name = [string]$entry.Key
+            if ($name -match '["\r\n]') { throw "Invalid multipart field name: $name" }
+            $header = "--$boundary`r`nContent-Disposition: form-data; name=`"$name`"`r`n`r`n$([string]$entry.Value)`r`n"
+            $bytes = [Text.Encoding]::UTF8.GetBytes($header)
+            $stream.Write($bytes,0,$bytes.Length)
+        }
+        foreach ($file in @($Files)) {
+            $name = [string]$file.Name
+            $fileName = [string]$file.FileName
+            $contentType = [string]$file.ContentType
+            if ($name -match '["\r\n]' -or $fileName -match '["\r\n]') { throw 'Invalid multipart file name.' }
+            if ([string]::IsNullOrWhiteSpace($contentType)) { $contentType = 'application/octet-stream' }
+            $header = "--$boundary`r`nContent-Disposition: form-data; name=`"$name`"; filename=`"$fileName`"`r`nContent-Type: $contentType`r`n`r`n"
+            $headerBytes = [Text.Encoding]::UTF8.GetBytes($header)
+            $stream.Write($headerBytes,0,$headerBytes.Length)
+            [byte[]]$fileBytes = @($file.Bytes)
+            $stream.Write($fileBytes,0,$fileBytes.Length)
+            $footerBytes = [Text.Encoding]::UTF8.GetBytes("`r`n")
+            $stream.Write($footerBytes,0,$footerBytes.Length)
+        }
+        $endBytes = [Text.Encoding]::UTF8.GetBytes("--$boundary--`r`n")
+        $stream.Write($endBytes,0,$endBytes.Length)
+        return [pscustomobject]@{ ContentType="multipart/form-data; boundary=$boundary"; BodyBytes=$stream.ToArray() }
+    } finally { $stream.Dispose() }
+}
+
+function Write-PucBytesAtomically {
+    param([Parameter(Mandatory)][string]$Path,[Parameter(Mandatory)][byte[]]$Bytes)
+    $resolvedPath = [IO.Path]::GetFullPath($Path)
+    $parent = Split-Path -Parent $resolvedPath
+    if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    $temporaryPath = $resolvedPath + '.tmp.' + [guid]::NewGuid().ToString('N')
+    $backupPath = $resolvedPath + '.backup.' + [guid]::NewGuid().ToString('N')
+    try {
+        [IO.File]::WriteAllBytes($temporaryPath,$Bytes)
+        if (Test-Path -LiteralPath $resolvedPath) {
+            [IO.File]::Replace($temporaryPath,$resolvedPath,$backupPath,$true)
+            Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
+        } else { [IO.File]::Move($temporaryPath,$resolvedPath) }
+    } finally {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Get-PucEnvironment {
@@ -255,6 +344,49 @@ function ConvertFrom-PucResponseEncoding {
     return $Value
 }
 
+function ConvertTo-PucDisplayValue {
+    param([AllowNull()]$Value, [string]$PropertyName = '')
+    if ($PropertyName -match '(?i)(authorization|cookie|token|password|passwd|pwd|captcha|secret)') {
+        if ($null -eq $Value) { return $null }
+        return '[REDACTED]'
+    }
+    if ($null -eq $Value -or $Value -is [string] -or $Value -is [ValueType]) { return $Value }
+    if ($Value -is [System.Collections.IDictionary]) {
+        $copy = [ordered]@{}
+        foreach ($key in $Value.Keys) { $copy[[string]$key] = ConvertTo-PucDisplayValue -Value $Value[$key] -PropertyName ([string]$key) }
+        return [pscustomobject]$copy
+    }
+    if ($Value -is [System.Collections.IEnumerable]) {
+        return ,@($Value | ForEach-Object { ConvertTo-PucDisplayValue -Value $_ })
+    }
+    if ($Value -is [pscustomobject]) {
+        $copy = [ordered]@{}
+        foreach ($property in $Value.PSObject.Properties) {
+            $copy[$property.Name] = ConvertTo-PucDisplayValue -Value $property.Value -PropertyName $property.Name
+        }
+        return [pscustomobject]$copy
+    }
+    return [string]$Value
+}
+
+function Format-PucApiResponsePreview {
+    param([AllowNull()]$Response)
+    return (ConvertTo-PucDisplayValue -Value $Response | ConvertTo-Json -Depth 100)
+}
+
+function New-PucApiFailureMessage {
+    param([Parameter(Mandatory)][string]$Operation, [AllowNull()]$Response)
+    $preview = Format-PucApiResponsePreview -Response $Response
+    return "$Operation failed. Full API response preview (credential fields redacted):`n$preview`nNo retry was attempted."
+}
+
+function Test-PucSavedTokenRejected {
+    param([AllowNull()]$Response)
+    if ($null -eq $Response) { return $false }
+    $resultProperty = $Response.PSObject.Properties['result']
+    return ($null -ne $resultProperty -and [string]$resultProperty.Value -eq '51800032')
+}
+
 function ConvertTo-PucDesHex {
     param([Parameter(Mandatory)][string]$Value)
     $bytes = [Text.Encoding]::UTF8.GetBytes($Value)
@@ -288,4 +420,4 @@ function Get-PucPropertyPath {
     return $current
 }
 
-Export-ModuleMember -Function Get-PucDefaultConfigRoot,Get-PucSettingsPath,Get-PucConfigRoot,Read-PucJson,Write-PucJson,Get-PucEnvironment,Test-PucConfigWriteAccess,Get-PucEntry,Set-PucEntry,Protect-PucString,Unprotect-PucString,ConvertTo-PucJsonBytes,ConvertFrom-PucResponseEncoding,ConvertTo-PucDesHex,Get-PucRuntimeEntry,Set-PucRuntimeEntry,Get-PucPropertyPath,Resolve-PucNodeExecutable,Invoke-PucHttpRequest,Invoke-PucJsonRequest
+Export-ModuleMember -Function Get-PucDefaultConfigRoot,Get-PucSettingsPath,Get-PucConfigRoot,Read-PucJson,Write-PucJson,Get-PucEnvironment,Test-PucConfigWriteAccess,Get-PucEntry,Set-PucEntry,Protect-PucString,Unprotect-PucString,ConvertTo-PucJsonBytes,ConvertFrom-PucResponseEncoding,ConvertTo-PucDisplayValue,Format-PucApiResponsePreview,New-PucApiFailureMessage,Test-PucSavedTokenRejected,ConvertTo-PucDesHex,Get-PucRuntimeEntry,Set-PucRuntimeEntry,Get-PucPropertyPath,Resolve-PucNodeExecutable,Invoke-PucHttpRequest,Invoke-PucJsonRequest,Invoke-PucJsonHttpRequest,ConvertFrom-PucJsonHttpResponse,New-PucMultipartFormData,Write-PucBytesAtomically

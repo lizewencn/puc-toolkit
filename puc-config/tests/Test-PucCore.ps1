@@ -49,18 +49,41 @@ function Test-Module {
         Assert-Equal (Read-PucJson -Path $path -Default $null).value 'second' 'Atomic JSON write'
         Assert-Equal @(Get-ChildItem -LiteralPath $dir -Filter '*.tmp.*').Count 0 'Temporary files remain'
         Assert-Equal @(Get-ChildItem -LiteralPath $dir -Filter '*.backup.*').Count 0 'Backup files remain'
+        $preview=Format-PucApiResponsePreview -Response ([pscustomobject]@{result=42;msg='failure';details=[pscustomobject]@{code='nested';token='secret-token';dispatcher_pwd='secret-cipher'}})
+        Assert-True ($preview -match '"result"\s*:\s*42') 'Failure preview omitted the result field'
+        Assert-True ($preview -match '"code"\s*:\s*"nested"') 'Failure preview omitted a nested non-secret field'
+        Assert-True ($preview -notmatch 'secret-token|secret-cipher') 'Failure preview exposed credential material'
+        Assert-True (([regex]::Matches($preview,'\[REDACTED\]')).Count -eq 2) 'Failure preview did not preserve redacted credential fields'
+        Assert-True (Test-PucSavedTokenRejected -Response ([pscustomobject]@{result=51800032;msg='verify-token failed'})) 'Known invalid-token result was not recognized'
+        Assert-True (Test-PucSavedTokenRejected -Response ([pscustomobject]@{result='51800032'})) 'String invalid-token result was not recognized'
+        Assert-True (-not (Test-PucSavedTokenRejected -Response ([pscustomobject]@{result=42;msg='business failure'}))) 'Unrelated business failure was treated as token rejection'
+        Assert-True (-not (Test-PucSavedTokenRejected -Response ([pscustomobject]@{result=0}))) 'Successful response was treated as token rejection'
     } finally { Remove-Item -LiteralPath $dir -Recurse -Force }
 }
 function Test-Transport {
     Import-Module $modulePath -Force
-    $port=if($ExternalServerPort){$ExternalServerPort}else{Get-FreePort};$server=if($ExternalServerPort){$null}else{Start-FakeServer $port}
+    $dir=New-TempDirectory;$port=if($ExternalServerPort){$ExternalServerPort}else{Get-FreePort};$server=if($ExternalServerPort){$null}else{Start-FakeServer $port}
     try {
         $cookies=@{}
         $response=Invoke-PucHttpRequest -Method GET -Uri ([uri]"http://127.0.0.1:$port/health") -CookieJar $cookies
         Assert-Equal $response.StatusCode 200 'Transport status'
         Assert-Equal $cookies.session 'abc' 'Cookie capture'
         Assert-True ([Text.Encoding]::UTF8.GetString($response.BodyBytes) -match '"ok":true') 'Transport response body'
-    } finally { Stop-FakeServer $server }
+        $sourceBytes=[byte[]]@(0,1,2,253,254,255)
+        $multipart=New-PucMultipartFormData -Fields ([ordered]@{alpha='value-one'}) -Files @([pscustomobject]@{Name='upload';FileName='sample.bin';ContentType='application/octet-stream';Bytes=$sourceBytes})
+        $multipartResponse=Invoke-PucHttpRequest -Method POST -Uri ([uri]"http://127.0.0.1:$port/multipart") -Headers @{'Content-Type'=$multipart.ContentType} -Body $multipart.BodyBytes
+        $multipartResult=ConvertFrom-PucJsonHttpResponse -Response $multipartResponse
+        Assert-True ($multipartResult.contentType -match '^multipart/form-data; boundary=') 'Multipart content type'
+        Assert-True ([bool]$multipartResult.hasField) 'Multipart field missing'
+        Assert-True ([bool]$multipartResult.hasFile) 'Multipart file missing'
+        $binaryResponse=Invoke-PucHttpRequest -Method GET -Uri ([uri]"http://127.0.0.1:$port/binary")
+        $outputPath=Join-Path $dir 'nested\download.bin'
+        Write-PucBytesAtomically -Path $outputPath -Bytes $binaryResponse.BodyBytes
+        Assert-Equal ([Convert]::ToBase64String([IO.File]::ReadAllBytes($outputPath))) ([Convert]::ToBase64String($sourceBytes)) 'Binary download bytes'
+        Write-PucBytesAtomically -Path $outputPath -Bytes ([byte[]]@(9,8,7))
+        Assert-Equal ([Convert]::ToBase64String([IO.File]::ReadAllBytes($outputPath))) ([Convert]::ToBase64String([byte[]]@(9,8,7))) 'Atomic binary replacement'
+        Assert-Equal @(Get-ChildItem -LiteralPath (Split-Path -Parent $outputPath) -Filter '*.tmp.*').Count 0 'Binary temporary files remain'
+    } finally { Stop-FakeServer $server;Remove-Item -LiteralPath $dir -Recurse -Force }
 }
 function Test-AccountsFile {
     $dir=New-TempDirectory
@@ -116,7 +139,7 @@ function Test-AccountCreation {
     try {
         New-TestConfig $dir $port
         $command=Join-Path $skillRoot 'scripts\Invoke-PucAccounts.ps1'
-        $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $command -Environment fake -Prefix new -StartSequence 1 -Count 1 -Live -ConfirmLive -ConfigRoot $dir)
+        $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $command -Environment fake -Prefix new -StartSequence 1 -Live -ConfirmLive -ConfigRoot $dir)
         $jsonLine=@($output|Where-Object { ([string]$_).TrimStart().StartsWith('{') })|Select-Object -Last 1
         Assert-True (-not [string]::IsNullOrWhiteSpace([string]$jsonLine)) 'Account creation policy output is missing'
         $policyResult=$jsonLine|ConvertFrom-Json

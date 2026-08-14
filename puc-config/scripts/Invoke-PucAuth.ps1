@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Validate','InteractiveLogin','Captcha','Login')][string]$Action,
+    [Parameter(Mandatory)][ValidateSet('Ensure','Validate','InteractiveLogin','Captcha','Login')][string]$Action,
     [Parameter(Mandatory)][string]$Environment,
     [string]$CaptchaValue,
     [string]$ConfigRoot
@@ -66,6 +66,28 @@ function Write-AtomicJson([string]$Path,$Value) {
 }
 
 try {
+    if ($Action -eq 'Ensure') {
+        $validationJson = & $PSCommandPath -Action Validate -Environment $Environment -ConfigRoot $root
+        $validation = $validationJson | ConvertFrom-Json
+        if ($validation.valid -eq $true) {
+            $validationJson
+            return
+        }
+        if ([string]$validation.reason -notin @('missing','rejected')) {
+            throw "Saved token validation did not return a recoverable state: $([string]$validation.reason)"
+        }
+        if ([string]$validation.reason -eq 'rejected' -and -not [string]::IsNullOrWhiteSpace([string]$validation.responsePreview)) {
+            Write-Warning ("Saved token was rejected. Full API response preview (credential fields redacted):`n" + [string]$validation.responsePreview)
+        }
+        $loginJson = & $PSCommandPath -Action InteractiveLogin -Environment $Environment -ConfigRoot $root
+        $login = $loginJson | ConvertFrom-Json
+        [pscustomobject]@{
+            status='auth_ready'; environment=$Environment; valid=$true; reason='interactive_login'
+            tokenSaved=([bool]$login.tokenSaved); previousTokenReason=[string]$validation.reason
+        } | ConvertTo-Json -Compress
+        return
+    }
+
     if ($Action -eq 'Validate') {
         if ([string]::IsNullOrWhiteSpace([string]$environmentConfig.token)) {
             [pscustomobject]@{status='token_checked';environment=$Environment;valid=$false;reason='missing'} | ConvertTo-Json -Compress
@@ -77,18 +99,31 @@ try {
         try { $response = Invoke-JsonRequest -Body $body -Headers $headers }
         catch {
             $statusCode = $null
-            if ($_.Exception.Response) { try{$statusCode=[int]$_.Exception.Response.StatusCode}catch{$statusCode=$null} }
+            if ($_.Exception.Data.Contains('PucHttpStatusCode')) { $statusCode = [int]$_.Exception.Data['PucHttpStatusCode'] }
+            elseif ($_.Exception.Response) { try{$statusCode=[int]$_.Exception.Response.StatusCode}catch{$statusCode=$null} }
             if ($statusCode -notin @(401,403)) { throw }
             Set-EnvironmentAuth -Token '' -PucId ([string]$environmentConfig.pucId)
-            [pscustomobject]@{status='token_checked';environment=$Environment;valid=$false;reason='rejected'} | ConvertTo-Json -Compress
+            [pscustomobject]@{
+                status='token_checked';environment=$Environment;valid=$false;reason='rejected';httpStatus=$statusCode
+                responsePreview=$(if ($_.Exception.Data.Contains('PucHttpResponsePreview')) { [string]$_.Exception.Data['PucHttpResponsePreview'] } else { '' })
+            } | ConvertTo-Json -Compress
             return
         }
-        if ([string]$response.result -eq '0') {
+        $resultProperty = $response.PSObject.Properties['result']
+        if ($null -eq $resultProperty) { throw 'Saved-token validation returned a response without result; the token was preserved.' }
+        if ([string]$resultProperty.Value -eq '0') {
             [pscustomobject]@{status='token_checked';environment=$Environment;valid=$true;reason=''} | ConvertTo-Json -Compress
             return
         }
+        if (-not (Test-PucSavedTokenRejected -Response $response)) {
+            throw (New-PucApiFailureMessage -Operation 'Saved-token validation' -Response $response)
+        }
         Set-EnvironmentAuth -Token '' -PucId ([string]$environmentConfig.pucId)
-        [pscustomobject]@{status='token_checked';environment=$Environment;valid=$false;reason='rejected';result=[string]$response.result;msg=[string]$response.msg} | ConvertTo-Json -Compress
+        [pscustomobject]@{
+            status='token_checked';environment=$Environment;valid=$false;reason='rejected'
+            result=[string]$response.result;msg=[string]$response.msg
+            responsePreview=Format-PucApiResponsePreview -Response $response
+        } | ConvertTo-Json -Compress
         return
     }
 
@@ -155,6 +190,7 @@ try {
                 $parts = @()
                 if (-not [string]::IsNullOrWhiteSpace([string]$result.result)) { $parts += "result=$([string]$result.result)" }
                 if (-not [string]::IsNullOrWhiteSpace([string]$result.msg)) { $parts += "msg=$([string]$result.msg)" }
+                if (-not [string]::IsNullOrWhiteSpace([string]$result.responsePreview)) { $parts += "Full API response preview (credential fields redacted):`n$([string]$result.responsePreview)" }
                 if ($parts.Count -eq 0) { $parts += [string]$result.detail }
                 throw ('Login was rejected: ' + ($parts -join '; ') + '. No retry was attempted.')
             }
@@ -193,6 +229,7 @@ try {
         $parts = @()
         if (-not [string]::IsNullOrWhiteSpace([string]$result.result)) { $parts += "result=$([string]$result.result)" }
         if (-not [string]::IsNullOrWhiteSpace([string]$result.msg)) { $parts += "msg=$([string]$result.msg)" }
+        if (-not [string]::IsNullOrWhiteSpace([string]$result.responsePreview)) { $parts += "Full API response preview (credential fields redacted):`n$([string]$result.responsePreview)" }
         if ($parts.Count -eq 0) { $parts += [string]$result.detail }
         throw ('Login was rejected: ' + ($parts -join '; ') + '. No retry was attempted.')
     }

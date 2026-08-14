@@ -213,6 +213,7 @@ try {
         Write-AtomicJson -Path $resultPath -Value ([ordered]@{
             status='failed'; environment=$Environment; result=[string]$response.result
             msg=[string]$response.msg; detail=Get-ResponseFailureSummary $response
+            responsePreview=Format-PucApiResponsePreview -Response $response
         })
         return
     }

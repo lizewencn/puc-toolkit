@@ -75,33 +75,17 @@ if ($PlanOnly) {
     return
 }
 
-$validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Validate -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
+$validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Ensure -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
 if ($validation.valid -ne $true) { throw "Saved token is not usable ($($validation.reason)). Complete the login workflow first." }
 $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
 $baseUri = [uri]$environmentConfig.baseUrl
-$oldCallback = [Net.ServicePointManager]::ServerCertificateValidationCallback
-$callbackChanged = $false
-if ($environmentConfig.allowInsecureTls -eq $true -and -not (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
-    [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-    $callbackChanged = $true
-}
 
-try {
-    $body = [ordered]@{
+$body = [ordered]@{
         cmd_guid=[guid]::NewGuid().ToString(); cmd_name='puc_upload_custom_system'
         puc_id=[string]$environmentConfig.pucId; realm=[string]$environmentConfig.realm
         version=0; file_content=$fileContent; file_target=$fileTarget
     }
-    [byte[]]$jsonBody = ConvertTo-PucJsonBytes -Value $body -Depth 30
-    $params = @{
-        Method='POST'; Uri=$baseUri.AbsoluteUri.TrimEnd('/') + '/confs'; ContentType='application/json; charset=utf-8'
-        Headers=@{ Accept='application/json, text/plain, */*'; token=[string]$environmentConfig.token }
-        Body=$jsonBody; TimeoutSec=60
-    }
-    if ($environmentConfig.allowInsecureTls -eq $true -and (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
-        $params.SkipCertificateCheck = $true
-    }
-    $response = ConvertFrom-PucResponseEncoding -Value (Invoke-RestMethod @params)
+    $response = Invoke-PucJsonRequest -Uri ([uri]($baseUri.AbsoluteUri.TrimEnd('/') + '/confs')) -Body $body -Headers @{token=[string]$environmentConfig.token} -AllowInsecureTls ([bool]$environmentConfig.allowInsecureTls) -TimeoutSec 60 -Depth 30
     if ($null -eq $response) { throw 'puc_upload_custom_system returned an empty response. No retry was attempted.' }
 
     $code = [string]$response.result
@@ -110,12 +94,9 @@ try {
     if ([string]::IsNullOrWhiteSpace($message) -and $null -ne $response.common) { $message = [string]$response.common.msg }
     if ([string]::IsNullOrWhiteSpace($code) -and $null -ne $response.extbody) { $code = [string]$response.extbody.result }
     if ([string]::IsNullOrWhiteSpace($message) -and $null -ne $response.extbody) { $message = [string]$response.extbody.msg }
-    if ($code -ne '0') { throw "puc_upload_custom_system failed: result=$code; msg=$message. No retry was attempted." }
+    if ($code -ne '0') { throw (New-PucApiFailureMessage -Operation 'puc_upload_custom_system' -Response $response) }
 
     [pscustomobject]@{
         status='imported'; action='PermissionMenuImport'; environment=$Environment; filePath=$resolvedPath
         target=$Target; fileTarget=$fileTarget; bytes=$file.Length; sha256=$fileHash; nodeCount=$nodeCount; result=$code
     } | ConvertTo-Json -Compress
-} finally {
-    if ($callbackChanged) { [Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCallback }
-}

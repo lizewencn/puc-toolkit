@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory)][string]$Environment,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9_]+$')][string]$Prefix,
     [Parameter(Mandatory)][ValidateRange(0,999)][int]$StartSequence,
-    [Parameter(Mandatory)][ValidateRange(1,1000)][int]$Count,
+    [ValidateRange(1,1000)][int]$Count = 1,
     [long]$DispatchStart,
     [string]$RoleName = '',
     [string]$RootOrganizationName = '',
@@ -22,7 +22,7 @@ Import-Module (Join-Path $PSScriptRoot 'PucConfig.psm1') -Force
 $root = Get-PucConfigRoot $ConfigRoot
 $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
 if (-not $PlanOnly) {
-    $validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Validate -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
+    $validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Ensure -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
     if ($validation.valid -ne $true) { throw "Saved token is not usable ($($validation.reason)). Complete the login workflow first." }
     $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
 }

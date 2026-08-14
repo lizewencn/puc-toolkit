@@ -4,7 +4,7 @@ Use `scripts/Invoke-PucAccounts.ps1`. Authentication is shared through the token
 
 ## Inputs
 
-Resolve these per batch instead of persisting them in `config.json`: exact environment, account prefix, start sequence, count, optional dispatch-number start, optional exact role name, and optional exact root organization name.
+Resolve these per batch instead of persisting them in `config.json`: exact environment, account prefix, start sequence, optional count, optional dispatch-number start, optional exact role name, and optional exact root organization name. When the user does not specify a count, use `1`; do not ask for confirmation of that default.
 
 Account naming is `<prefix><environment-suffix><NNN>`. Derive `environment-suffix` from the last IPv4 octet of the selected environment's `baseUrl`; do not derive it from the local environment name. Keep the octet in its natural decimal form without zero-padding. For example, prefix `mhw`, environment host `10.161.30.163`, and sequence `1` produce account `mhw163001` and alias `mhw163001_alias`. A supplied dispatch-number start increments by one; otherwise use a monotonic millisecond value.
 
@@ -18,15 +18,17 @@ The default account password comes from the selected environment's plaintext `ne
 
 ## Execute
 
-1. Validate the saved token with the login workflow. Reauthenticate if rejected.
+1. Run the login workflow's `Ensure` action. It validates a saved token and automatically starts one interactive login when the token is missing or explicitly rejected.
 2. For an actual creation request, run one live command. It performs the authenticated prefix lookup, prepares the complete batch in memory, and only then sends `add_account` requests:
 
+   Obtain network and configuration-root approval before this command and run the launcher outside a restricted sandbox from the first attempt. Do not run a sandboxed Schannel probe first.
+
 ```powershell
-& <skill>\scripts\Invoke-PucAccounts.ps1 `
+<skill>\scripts\Invoke-PucScript.cmd Invoke-PucAccounts.ps1 `
   -Environment <environment> `
   -Prefix <prefix> `
   -StartSequence <start> `
-  -Count <count> `
+  -Count <count, default 1> `
   -Live `
   -ConfirmLive
 ```
@@ -36,5 +38,7 @@ If it stops with `ACCOUNT_LOOKUP_DECISION_REQUIRED`, show the returned count and
 3. Use `-DryRun` only when the user explicitly asks for a preview without creation. A later live command performs a fresh single lookup because dry-run state is not persisted.
 4. After the live creation batch finishes, query the login policy once. Report whether "dispatcher first-login password validation" is enabled. If disabled, tell the user they can run the first-login password validation setting workflow; do not enable it automatically. If the query fails, preserve the creation result and report that policy status is unknown.
 5. Return prepared and created accounts, generated range, duplicates, selected role, authorization lookups, final per-item results, and `firstLoginPasswordValidation` directly to the user. Do not persist dry-run or live reports.
+
+Omit `-Count` when the user did not provide it; the script defaults it to `1`. The resulting single-account request is already authorized by the user's creation instruction and must not trigger another confirmation prompt.
 
 Do not retry `add_account`. Stop on the first failed or uncertain response.

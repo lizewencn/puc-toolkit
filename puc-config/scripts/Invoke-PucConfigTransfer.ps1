@@ -45,32 +45,14 @@ if ($Action -eq 'Import') {
     }
 }
 
-$validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Validate -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
+$validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Ensure -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
 if ($validation.valid -ne $true) { throw "Saved token is not usable ($($validation.reason)). Complete the login workflow first." }
 $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
 
 $baseUri = [uri]$environmentConfig.baseUrl
-$oldCallback = [Net.ServicePointManager]::ServerCertificateValidationCallback
-$callbackChanged = $false
-if ($environmentConfig.allowInsecureTls -eq $true -and -not (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
-    [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-    $callbackChanged = $true
-}
 
 function Invoke-PucTransferRequest([hashtable]$Body) {
-    [byte[]]$jsonBody = ConvertTo-PucJsonBytes -Value $Body -Depth 30
-    $params = @{
-        Method='POST'
-        Uri=$baseUri.AbsoluteUri.TrimEnd('/') + '/confs'
-        ContentType='application/json; charset=utf-8'
-        Headers=@{ Accept='application/json, text/plain, */*'; token=[string]$environmentConfig.token }
-        Body=$jsonBody
-        TimeoutSec=60
-    }
-    if ($environmentConfig.allowInsecureTls -eq $true -and (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
-        $params.SkipCertificateCheck = $true
-    }
-    $result = ConvertFrom-PucResponseEncoding -Value (Invoke-RestMethod @params)
+    $result = Invoke-PucJsonRequest -Uri ([uri]($baseUri.AbsoluteUri.TrimEnd('/') + '/confs')) -Body $Body -Headers @{token=[string]$environmentConfig.token} -AllowInsecureTls ([bool]$environmentConfig.allowInsecureTls) -TimeoutSec 60 -Depth 30
     if ($null -eq $result) { throw "The $($Body.cmd_name) response was empty. No retry was attempted." }
     return $result
 }
@@ -81,7 +63,7 @@ function Get-SuccessResponse($Envelope, [string]$Operation) {
     $code = [string]$response.code_info.code
     $message = [string]$response.code_info.message
     if ([string]::IsNullOrWhiteSpace($message)) { $message = [string]$response.code_info.msg }
-    if ($code -ne '0') { throw "$Operation failed: code=$code; msg=$message. No retry was attempted." }
+    if ($code -ne '0') { throw (New-PucApiFailureMessage -Operation $Operation -Response $Envelope) }
     return $response
 }
 
@@ -104,8 +86,7 @@ function Wait-PucTransfer([string]$ProgressCommand, [string]$TaskId) {
     }
 }
 
-try {
-    if ($Action -eq 'Export') {
+if ($Action -eq 'Export') {
         $requestedTaskId = [guid]::NewGuid().ToString()
         $envelope = Invoke-PucTransferRequest @{
             cmd_name='export_request'; product_name=$ProductName; version=$Version
@@ -127,23 +108,10 @@ try {
         New-Item -ItemType Directory -Force -Path $exportDirectory | Out-Null
         $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
         $outputPath = Join-Path $exportDirectory "pucConfig-$safeEnvironment-$stamp-$taskId.json"
-        $partialPath = $outputPath + '.partial'
         if (Test-Path -LiteralPath $outputPath) { throw "Export target already exists: $outputPath" }
-        try {
-            $downloadParams = @{
-                Uri=$downloadUri; Headers=@{ Authorization="Bearer $downloadToken" }
-                OutFile=$partialPath; TimeoutSec=60; UseBasicParsing=$true
-            }
-            if ($environmentConfig.allowInsecureTls -eq $true -and (Get-Command Invoke-WebRequest).Parameters.ContainsKey('SkipCertificateCheck')) {
-                $downloadParams.SkipCertificateCheck = $true
-            }
-            Invoke-WebRequest @downloadParams | Out-Null
-            $downloaded = Get-Item -LiteralPath $partialPath
-            if ($downloaded.Length -le 0) { throw 'Downloaded export file was empty.' }
-            Move-Item -LiteralPath $partialPath -Destination $outputPath
-        } finally {
-            if (Test-Path -LiteralPath $partialPath) { Remove-Item -LiteralPath $partialPath -Force }
-        }
+        $downloadResponse = Invoke-PucHttpRequest -Method GET -Uri $downloadUri -Headers @{Authorization="Bearer $downloadToken"} -AllowInsecureTls ([bool]$environmentConfig.allowInsecureTls) -TimeoutSec 60
+        if ($null -eq $downloadResponse.BodyBytes -or $downloadResponse.BodyBytes.Count -le 0) { throw 'Downloaded export file was empty.' }
+        Write-PucBytesAtomically -Path $outputPath -Bytes $downloadResponse.BodyBytes
         $output = Get-Item -LiteralPath $outputPath
         try {
             $licenseEnvelope = Invoke-PucTransferRequest @{
@@ -152,7 +120,7 @@ try {
             $licenseResult = [string]$licenseEnvelope.result
             $licenseMessage = [string]$licenseEnvelope.msg
             if ($licenseResult -ne '0') {
-                throw "license_download failed: result=$licenseResult; msg=$licenseMessage. No retry was attempted."
+                throw (New-PucApiFailureMessage -Operation 'license_download' -Response $licenseEnvelope)
             }
             $licenseRemotePath = [string]$licenseEnvelope.file_url
             $licenseDownloadToken = [string]$licenseEnvelope.token
@@ -172,23 +140,10 @@ try {
             if ([string]::IsNullOrWhiteSpace($licenseRemoteName)) { throw 'license_download returned an empty file name.' }
             $licenseRemoteName = $licenseRemoteName -replace '[^A-Za-z0-9_.-]', '_'
             $licenseOutputPath = Join-Path $exportDirectory "pucLicense-$safeEnvironment-$stamp-$licenseRemoteName.enc"
-            $licensePartialPath = $licenseOutputPath + '.partial'
             if (Test-Path -LiteralPath $licenseOutputPath) { throw "License export target already exists: $licenseOutputPath" }
-            try {
-                $licenseDownloadParams = @{
-                    Uri=$licenseDownloadUri; Headers=@{ Authorization="Bearer $licenseDownloadToken" }
-                    OutFile=$licensePartialPath; TimeoutSec=60; UseBasicParsing=$true
-                }
-                if ($environmentConfig.allowInsecureTls -eq $true -and (Get-Command Invoke-WebRequest).Parameters.ContainsKey('SkipCertificateCheck')) {
-                    $licenseDownloadParams.SkipCertificateCheck = $true
-                }
-                Invoke-WebRequest @licenseDownloadParams | Out-Null
-                $downloadedLicense = Get-Item -LiteralPath $licensePartialPath
-                if ($downloadedLicense.Length -le 0) { throw 'Downloaded License file was empty.' }
-                Move-Item -LiteralPath $licensePartialPath -Destination $licenseOutputPath
-            } finally {
-                if (Test-Path -LiteralPath $licensePartialPath) { Remove-Item -LiteralPath $licensePartialPath -Force }
-            }
+            $licenseDownloadResponse = Invoke-PucHttpRequest -Method GET -Uri $licenseDownloadUri -Headers @{Authorization="Bearer $licenseDownloadToken"} -AllowInsecureTls ([bool]$environmentConfig.allowInsecureTls) -TimeoutSec 60
+            if ($null -eq $licenseDownloadResponse.BodyBytes -or $licenseDownloadResponse.BodyBytes.Count -le 0) { throw 'Downloaded License file was empty.' }
+            Write-PucBytesAtomically -Path $licenseOutputPath -Bytes $licenseDownloadResponse.BodyBytes
             $licenseOutput = Get-Item -LiteralPath $licenseOutputPath
         } catch {
             throw "License export failed after the configuration file was saved at '$outputPath': $($_.Exception.Message)"
@@ -202,11 +157,11 @@ try {
             licenseSha256=(Get-FileHash -LiteralPath $licenseOutput.FullName -Algorithm SHA256).Hash
         } | ConvertTo-Json -Compress
         return
-    }
+}
 
-    $requestedTaskId = [guid]::NewGuid().ToString()
-    $encodedFile = [Convert]::ToBase64String([IO.File]::ReadAllBytes($resolvedImportPath))
-    $envelope = Invoke-PucTransferRequest @{
+$requestedTaskId = [guid]::NewGuid().ToString()
+$encodedFile = [Convert]::ToBase64String([IO.File]::ReadAllBytes($resolvedImportPath))
+$envelope = Invoke-PucTransferRequest @{
         cmd_name='import_request'; product_name=$ProductName; version=$Version
         request=[ordered]@{ task_id=$requestedTaskId; user=[string]$environmentConfig.adminAccount; file=$encodedFile }
     }
@@ -218,7 +173,4 @@ try {
     [pscustomobject]@{
         status='imported'; environment=$Environment; taskId=$returnedTaskId; filePath=$resolvedImportPath
         bytes=$importFile.Length; sha256=$fileHash; percentage=[int]$completed.progress.percentage
-    } | ConvertTo-Json -Compress
-} finally {
-    if ($callbackChanged) { [Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCallback }
-}
+} | ConvertTo-Json -Compress

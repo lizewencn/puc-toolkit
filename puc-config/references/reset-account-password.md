@@ -33,7 +33,7 @@ Run an authenticated preview first:
   -DryRun
 ```
 
-Show the exact environment, account, and returned snapshot hash without password material. Require explicit confirmation of those values. Then run live mode with that hash:
+Show the exact environment, account, and returned snapshot hash without password material. Treat the user's explicit instruction naming that exact environment and account as confirmation. Run live mode with that hash without asking again:
 
 ```powershell
 <skill>\scripts\Invoke-PucScript.cmd Invoke-PucAccountPasswordReset.ps1 `
@@ -52,15 +52,15 @@ After a successful single reset, query the login policy and report whether "disp
 
 A batch reset is a set of independent per-account workflows:
 
-- Discover every matching account across all account-list pages and preview every target before confirmation.
-- Show the complete target list and snapshot hash for each account. One confirmation covers only that displayed batch.
-- After confirmation, launch every account workflow concurrently. Do not make one account wait for another account to finish.
+- Discover every matching account across all account-list pages and preview every target before authorization.
+- Show the complete target list and snapshot hash for each account. For `-Query`, require one explicit confirmation covering only that displayed batch because the query discovers accounts the user did not enumerate. For `-AccountsPath`, treat the user's explicit enumeration of the exact environment and account set as confirmation and do not ask again after preview.
+- After authorization, launch every account workflow concurrently. Do not make one account wait for another account to finish.
 - Within each account workflow, preserve the strict order: timestamp-password update first, then the `newAccountPassword` update only after that account's first call returns `result == 0`.
 - A failure for one account must not cancel or delay the other account workflows.
 - Do not automatically retry either write stage.
 - Report every account separately, including whether it failed before writing, at stage 1, or after stage 1 while restoring `newAccountPassword`.
 - After all account workers finish, query the login policy exactly once for the batch and include `firstLoginPasswordValidation` in the final result. Do not query once per account.
-- If an account snapshot changed after preview, perform no write for that account. Re-preview and re-confirm only that changed account. Never run an already successful account again while recovering a partial batch.
+- If an account snapshot changed after preview, perform no write for that account. Re-preview it. Reconfirm only when the discovered target set or material reset scope differs from what was authorized; do not reconfirm an unchanged exact-account request. Never run an already successful account again while recovering a partial batch.
 
 This produces concurrency across accounts and a serial dependency only inside each account:
 
@@ -96,7 +96,7 @@ When the user supplies an explicit account set, write a temporary UTF-8 JSON arr
 
 The script rejects non-string values, invalid account characters, empty lists, and case-insensitive duplicates. It performs an exact case-insensitive lookup for every requested account and refuses the complete preview if any account is missing or ambiguous. Never create a broad query manifest and edit it by hand.
 
-After showing the complete manifest and receiving explicit confirmation, execute the batch:
+After showing the complete manifest, execute immediately for an explicitly enumerated account set. For a query-discovered target set, execute after receiving its one explicit confirmation:
 
 ```powershell
 <skill>\scripts\Invoke-PucScript.cmd Invoke-PucAccountPasswordResetBatch.ps1 `

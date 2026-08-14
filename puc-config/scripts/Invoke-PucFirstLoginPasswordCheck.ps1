@@ -32,7 +32,7 @@ if ($PlanOnly) {
 $root = Get-PucConfigRoot $ConfigRoot
 $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
 if ([string]::IsNullOrWhiteSpace($EndpointOverride)) {
-    $validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Validate -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
+    $validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Ensure -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
     if ($validation.valid -ne $true) { throw "Saved token is not usable ($($validation.reason)). Complete the login workflow first." }
     $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
 }
@@ -43,7 +43,7 @@ function Assert-ApiSuccess($Response,[string]$Operation) {
     if ($null -eq $Response) { throw "$Operation returned an empty response. No retry was attempted." }
     $resultProperty = $Response.PSObject.Properties['result']
     if ($null -eq $resultProperty) { throw "$Operation response did not contain result. No retry was attempted." }
-    if ([string]$resultProperty.Value -ne '0') { throw "$Operation failed: result=$([string]$resultProperty.Value); msg=$([string]$Response.msg). No retry was attempted." }
+    if ([string]$resultProperty.Value -ne '0') { throw (New-PucApiFailureMessage -Operation $Operation -Response $Response) }
 }
 
 function Invoke-PolicyRequest($Body) {

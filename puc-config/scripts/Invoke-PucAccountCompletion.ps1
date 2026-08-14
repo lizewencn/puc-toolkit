@@ -41,7 +41,7 @@ function Assert-Success($Response, [string]$Command) {
     $resultProperty = @($Response.PSObject.Properties.Match('result')) | Select-Object -First 1
     if ($null -eq $resultProperty) { throw "$Command returned a response without result. No retry was attempted." }
     if ([string]$resultProperty.Value -ne '0') {
-        throw "$Command failed: result=$([string]$resultProperty.Value); msg=$([string](Get-PropertyValue $Response 'msg' '')). No retry was attempted."
+        throw (New-PucApiFailureMessage -Operation $Command -Response $Response)
     }
 }
 
@@ -144,7 +144,7 @@ if ($PlanOnly) {
 }
 
 if ($DryRun) {
-    $validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Validate -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
+    $validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Ensure -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
     if ($validation.valid -ne $true) { throw "Saved token is not usable ($($validation.reason)). Complete the login workflow first." }
     $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
     $baseline = Get-CompletionBaseline $environmentConfig

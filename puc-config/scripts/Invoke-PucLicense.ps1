@@ -49,64 +49,25 @@ if ($Action -eq 'Import') {
     }
 }
 
-$validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Validate -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
+$validation = & (Join-Path $PSScriptRoot 'Invoke-PucAuth.ps1') -Action Ensure -Environment $Environment -ConfigRoot $root | ConvertFrom-Json
 if ($validation.valid -ne $true) { throw "Saved token is not usable ($($validation.reason)). Complete the login workflow first." }
 $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
 $baseUri = [uri]$environmentConfig.baseUrl
-$oldCallback = [Net.ServicePointManager]::ServerCertificateValidationCallback
-$callbackChanged = $false
-if ($environmentConfig.allowInsecureTls -eq $true -and -not (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
-    [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-    $callbackChanged = $true
-}
 
 function Invoke-PucLicenseJsonRequest([hashtable]$Body) {
-    [byte[]]$jsonBody = ConvertTo-PucJsonBytes -Value $Body -Depth 30
-    $params = @{
-        Method='POST'; Uri=$baseUri.AbsoluteUri.TrimEnd('/') + '/confs'
-        ContentType='application/json; charset=utf-8'
-        Headers=@{ Accept='application/json, text/plain, */*'; token=[string]$environmentConfig.token }
-        Body=$jsonBody; TimeoutSec=60
-    }
-    if ($environmentConfig.allowInsecureTls -eq $true -and (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
-        $params.SkipCertificateCheck = $true
-    }
-    $response = ConvertFrom-PucResponseEncoding -Value (Invoke-RestMethod @params)
+    $response = Invoke-PucJsonRequest -Uri ([uri]($baseUri.AbsoluteUri.TrimEnd('/') + '/confs')) -Body $Body -Headers @{token=[string]$environmentConfig.token} -AllowInsecureTls ([bool]$environmentConfig.allowInsecureTls) -TimeoutSec 60 -Depth 30
     if ($null -eq $response) { throw "The $($Body.cmd_name) response was empty. No retry was attempted." }
     return $response
 }
 
 function Invoke-PucLicenseMultipartRequest([System.Collections.IDictionary]$Fields, [string]$UploadPath) {
-    $boundary = '----------------PucLicense' + [guid]::NewGuid().ToString('N')
-    $stream = New-Object IO.MemoryStream
-    try {
-        foreach ($entry in $Fields.GetEnumerator()) {
-            $part = "--$boundary`r`nContent-Disposition: form-data; name=`"$($entry.Key)`"`r`n`r`n$($entry.Value)`r`n"
-            $partBytes = [Text.Encoding]::UTF8.GetBytes($part)
-            $stream.Write($partBytes, 0, $partBytes.Length)
-        }
-        $fileName = [IO.Path]::GetFileName($UploadPath)
-        $fileHeader = "--$boundary`r`nContent-Disposition: form-data; name=`"file`"; filename=`"$fileName`"`r`nContent-Type: application/octet-stream`r`n`r`n"
-        $fileHeaderBytes = [Text.Encoding]::UTF8.GetBytes($fileHeader)
-        $stream.Write($fileHeaderBytes, 0, $fileHeaderBytes.Length)
-        $fileBytes = [IO.File]::ReadAllBytes($UploadPath)
-        $stream.Write($fileBytes, 0, $fileBytes.Length)
-        $footerBytes = [Text.Encoding]::UTF8.GetBytes("`r`n--$boundary--`r`n")
-        $stream.Write($footerBytes, 0, $footerBytes.Length)
-        [byte[]]$body = $stream.ToArray()
-    } finally {
-        $stream.Dispose()
-    }
-    $params = @{
-        Method='POST'; Uri=$baseUri.AbsoluteUri.TrimEnd('/') + '/confs'
-        ContentType="multipart/form-data; boundary=$boundary"
-        Headers=@{ Accept='application/json, text/plain, */*'; token=[string]$environmentConfig.token }
-        Body=$body; TimeoutSec=60
-    }
-    if ($environmentConfig.allowInsecureTls -eq $true -and (Get-Command Invoke-RestMethod).Parameters.ContainsKey('SkipCertificateCheck')) {
-        $params.SkipCertificateCheck = $true
-    }
-    $response = ConvertFrom-PucResponseEncoding -Value (Invoke-RestMethod @params)
+    $multipart = New-PucMultipartFormData -Fields $Fields -Files @([pscustomobject]@{
+        Name='file'; FileName=[IO.Path]::GetFileName($UploadPath); ContentType='application/octet-stream'; Bytes=[IO.File]::ReadAllBytes($UploadPath)
+    })
+    $responseEnvelope = Invoke-PucHttpRequest -Method POST -Uri ([uri]($baseUri.AbsoluteUri.TrimEnd('/') + '/confs')) -Headers @{
+        Accept='application/json, text/plain, */*'; token=[string]$environmentConfig.token; 'Content-Type'=$multipart.ContentType
+    } -Body $multipart.BodyBytes -AllowInsecureTls ([bool]$environmentConfig.allowInsecureTls) -TimeoutSec 60
+    $response = ConvertFrom-PucJsonHttpResponse -Response $responseEnvelope
     if ($null -eq $response) { throw "The $($Fields.cmd_name) response was empty. No retry was attempted." }
     return $response
 }
@@ -114,7 +75,7 @@ function Invoke-PucLicenseMultipartRequest([System.Collections.IDictionary]$Fiel
 function Assert-PucLicenseSuccess($Response, [string]$Operation) {
     $result = [string]$Response.result
     $message = [string]$Response.msg
-    if ($result -ne '0') { throw "$Operation failed: result=$result; msg=$message. No retry was attempted." }
+    if ($result -ne '0') { throw (New-PucApiFailureMessage -Operation $Operation -Response $Response) }
 }
 
 function Get-PucLicensePreview {
@@ -123,7 +84,7 @@ function Get-PucLicensePreview {
     }
     $currentResult = [string]$currentResponse.result
     if ($currentResult -ne '0' -and $currentResult -ne '51800015' -and $currentResult -ne '51800017') {
-        throw "puc_get_license_info_list failed: result=$currentResult; msg=$([string]$currentResponse.msg). No retry was attempted."
+        throw (New-PucApiFailureMessage -Operation 'puc_get_license_info_list' -Response $currentResponse)
     }
     $currentType = [string]$currentResponse.lic_info_list.license_base_info.licType
     $replacementRequired = $currentType -in @('Business','Temp')
@@ -148,8 +109,7 @@ function Get-PucLicensePreview {
     }
 }
 
-try {
-    if ($Action -eq 'Export') {
+if ($Action -eq 'Export') {
         $response = Invoke-PucLicenseJsonRequest @{ cmd_name='license_download'; realm=[string]$environmentConfig.realm }
         Assert-PucLicenseSuccess $response 'license_download'
         $remotePath = [string]$response.file_url
@@ -169,32 +129,20 @@ try {
         $directory = Join-Path $baseDirectory $safeEnvironment
         New-Item -ItemType Directory -Force -Path $directory | Out-Null
         $outputPath = Join-Path $directory "pucLicense-$safeEnvironment-$(Get-Date -Format 'yyyyMMdd-HHmmss')-$remoteName.enc"
-        $partialPath = $outputPath + '.partial'
-        try {
-            $downloadParams = @{
-                Uri=$downloadUri; Headers=@{ Authorization="Bearer $downloadToken" }
-                OutFile=$partialPath; TimeoutSec=60; UseBasicParsing=$true
-            }
-            if ($environmentConfig.allowInsecureTls -eq $true -and (Get-Command Invoke-WebRequest).Parameters.ContainsKey('SkipCertificateCheck')) {
-                $downloadParams.SkipCertificateCheck = $true
-            }
-            Invoke-WebRequest @downloadParams | Out-Null
-            $downloaded = Get-Item -LiteralPath $partialPath
-            if ($downloaded.Length -le 0) { throw 'Downloaded License file was empty.' }
-            Move-Item -LiteralPath $partialPath -Destination $outputPath
-        } finally {
-            if (Test-Path -LiteralPath $partialPath) { Remove-Item -LiteralPath $partialPath -Force }
-        }
+        if (Test-Path -LiteralPath $outputPath) { throw "License export target already exists: $outputPath" }
+        $downloadResponse = Invoke-PucHttpRequest -Method GET -Uri $downloadUri -Headers @{Authorization="Bearer $downloadToken"} -AllowInsecureTls ([bool]$environmentConfig.allowInsecureTls) -TimeoutSec 60
+        if ($null -eq $downloadResponse.BodyBytes -or $downloadResponse.BodyBytes.Count -le 0) { throw 'Downloaded License file was empty.' }
+        Write-PucBytesAtomically -Path $outputPath -Bytes $downloadResponse.BodyBytes
         $output = Get-Item -LiteralPath $outputPath
         [pscustomobject]@{
             status='exported'; action='Export'; environment=$Environment; filePath=$output.FullName
             bytes=$output.Length; sha256=(Get-FileHash -LiteralPath $output.FullName -Algorithm SHA256).Hash
         } | ConvertTo-Json -Compress
         return
-    }
+}
 
-    $preview = Get-PucLicensePreview
-    if ($DryRun) {
+$preview = Get-PucLicensePreview
+if ($DryRun) {
         [pscustomobject]@{
             status='previewed'; action='Import'; environment=$Environment; filePath=$resolvedFilePath
             bytes=$licenseFile.Length; sha256=$fileHash; currentLicenseType=$preview.currentLicenseType
@@ -212,7 +160,4 @@ try {
         status='imported'; action='Import'; environment=$Environment; filePath=$resolvedFilePath
         bytes=$licenseFile.Length; sha256=$fileHash; previousLicenseType=$preview.currentLicenseType
         importedLicenseType=$preview.incomingLicenseType; replacement=$preview.replacementRequired
-    } | ConvertTo-Json -Compress
-} finally {
-    if ($callbackChanged) { [Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCallback }
-}
+} | ConvertTo-Json -Compress

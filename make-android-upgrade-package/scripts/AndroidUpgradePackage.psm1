@@ -46,7 +46,21 @@ function Get-AndroidApkInfo {
     if (-not (Test-Path -LiteralPath $AaptPath -PathType Leaf)) { throw "内置 aapt 不存在：$AaptPath" }
     $resolvedApk = (Resolve-Path -LiteralPath $ApkPath).Path
     $resolvedAapt = (Resolve-Path -LiteralPath $AaptPath).Path
-    $output = Invoke-AaptBadging -AaptPath $resolvedAapt -ApkPath $resolvedApk
+    $aaptApkPath = $resolvedApk
+    $aaptTempDirectory = $null
+    try {
+        if ($resolvedApk -match '[^\x00-\x7F]') {
+            $aaptTempDirectory = Join-Path ([IO.Path]::GetTempPath()) ('puc-aapt-' + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $aaptTempDirectory | Out-Null
+            $aaptApkPath = Join-Path $aaptTempDirectory 'app.apk'
+            Copy-Item -LiteralPath $resolvedApk -Destination $aaptApkPath
+        }
+        $output = Invoke-AaptBadging -AaptPath $resolvedAapt -ApkPath $aaptApkPath
+    } finally {
+        if (-not [string]::IsNullOrWhiteSpace($aaptTempDirectory)) {
+            Remove-Item -LiteralPath $aaptTempDirectory -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
     $match = [regex]::Match($output,"(?m)^package:\s+name='(?<package>[^']+)'\s+versionCode='(?<code>\d+)'\s+versionName='(?<name>[^']+)'(?:\s+.*)?$")
     if (-not $match.Success) { throw 'aapt 输出缺少有效的包名、versionCode 或 versionName。' }
     $code = 0L

@@ -44,6 +44,19 @@ try {
     Assert-Throws { Get-AndroidApkInfo -ApkPath (Join-Path $testRoot 'missing.apk') -AaptPath $fakeAapt } '不存在' 'missing APK'
     Assert-Throws { Get-AndroidApkInfo -ApkPath $apkPath -AaptPath (Join-Path $testRoot 'missing-aapt.exe') } 'aapt' 'missing aapt'
 
+    $unicodeDirectory = Join-Path $testRoot '中文路径'
+    New-Item -ItemType Directory -Path $unicodeDirectory | Out-Null
+    $unicodeApk = Join-Path $unicodeDirectory '应用.apk'
+    Copy-Item -LiteralPath $apkPath -Destination $unicodeApk
+    try {
+        $env:FAKE_AAPT_REQUIRE_TEMP = '1'
+        $unicodeInfo = Get-AndroidApkInfo -ApkPath $unicodeApk -AaptPath $fakeAapt
+        Assert-Equal $unicodeInfo.Path $unicodeApk 'Unicode APK keeps original path'
+        Assert-Equal $unicodeInfo.FileName '应用.apk' 'Unicode APK keeps original name'
+    } finally {
+        Remove-Item Env:FAKE_AAPT_REQUIRE_TEMP -ErrorAction SilentlyContinue
+    }
+
     $output = Join-Path $testRoot 'output'
     New-Item -ItemType Directory -Path $output | Out-Null
     $package = New-AndroidUpgradePackage -ApkInfo $info -Description '1. 修复登录问题' -Force:$false -OutputDirectory $output

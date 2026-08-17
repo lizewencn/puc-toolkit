@@ -94,7 +94,7 @@ Write `version.json` as UTF-8 JSON with these fields:
 
 Preserve the parsed type of `version_code` when it is a decimal integer. Reject a value that cannot be represented reliably rather than silently changing it.
 
-`MD5.txt` contains the lowercase 32-character MD5 digest of the completed `upgrade.zip`, followed by a newline. The internal filenames `upgrade.zip`, `version.json`, and `MD5.txt` remain fixed.
+`MD5.txt` contains exactly the lowercase 32-character ASCII MD5 digest of the completed `upgrade.zip`, with no BOM, spaces, CR, LF, or other trailing bytes. The internal filenames `upgrade.zip`, `version.json`, and `MD5.txt` remain fixed.
 
 ## File safety
 

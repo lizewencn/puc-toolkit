@@ -62,6 +62,12 @@ try {
     $package = New-AndroidUpgradePackage -ApkInfo $info -Description '1. 修复登录问题' -Force:$false -OutputDirectory $output
     Assert-Equal (Split-Path $package -Leaf) '升级包_4.3.00.016_4300016.zip' 'final filename'
     Assert-Equal ((Get-ZipEntryNames $package) -join ',') 'MD5.txt,upgrade.zip' 'outer entries'
+    $md5Extract = Join-Path $testRoot 'md5-extract'
+    [IO.Compression.ZipFile]::ExtractToDirectory($package,$md5Extract)
+    $md5Bytes = [IO.File]::ReadAllBytes((Join-Path $md5Extract 'MD5.txt'))
+    Assert-Equal $md5Bytes.Length 32 'MD5.txt exact byte length'
+    if ($md5Bytes[-1] -in @(10,13)) { throw 'MD5.txt must not end with CR or LF.' }
+    Write-Output 'PASS MD5.txt has no trailing newline'
     $validated = Assert-AndroidUpgradePackage -PackagePath $package -ExpectedApkInfo $info -ExpectedDescription '1. 修复登录问题' -ExpectedForce:$false
     Assert-Equal $validated.Valid $true 'package validation'
     Assert-Throws { New-AndroidUpgradePackage -ApkInfo $info -Description 'again' -Force:$true -OutputDirectory $output } '已存在' 'overwrite protection'

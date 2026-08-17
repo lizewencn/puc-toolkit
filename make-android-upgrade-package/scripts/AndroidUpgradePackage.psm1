@@ -110,9 +110,9 @@ function Assert-AndroidUpgradePackage {
             [string]$document.terminal -ne 'android' -or
             [long]$document.apksize -ne [long]$ExpectedApkInfo.Size) { throw 'version.json 内容与预期不一致。' }
         if ((Get-LowerMd5 $archivedApk) -ne [string]$ExpectedApkInfo.Md5 -or (Get-Item $archivedApk).Length -ne [long]$ExpectedApkInfo.Size) { throw '归档内 APK 校验失败。' }
-        $recordedMd5 = (Get-Content -Raw -Encoding ASCII (Join-Path $temp 'MD5.txt')).Trim()
+        $recordedMd5 = Get-Content -Raw -Encoding ASCII (Join-Path $temp 'MD5.txt')
         $innerMd5 = Get-LowerMd5 $inner
-        if ($recordedMd5 -notmatch '^[a-f0-9]{32}$' -or $recordedMd5 -ne $innerMd5) { throw 'upgrade.zip MD5 校验失败。' }
+        if ($recordedMd5 -notmatch '^[a-f0-9]{32}\z' -or $recordedMd5 -ne $innerMd5) { throw 'upgrade.zip MD5 校验失败。' }
         [pscustomobject]@{Valid=$true;UpgradeZipMd5=$innerMd5;OutputSize=[long](Get-Item $PackagePath).Length}
     } finally {
         Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
@@ -142,7 +142,7 @@ function New-AndroidUpgradePackage {
         [IO.File]::WriteAllText((Join-Path $innerDir 'version.json'),($version | ConvertTo-Json),[Text.UTF8Encoding]::new($false))
         $innerZip = Join-Path $work 'upgrade.zip'
         [IO.Compression.ZipFile]::CreateFromDirectory($innerDir,$innerZip,[IO.Compression.CompressionLevel]::Optimal,$false)
-        [IO.File]::WriteAllText((Join-Path $work 'MD5.txt'),((Get-LowerMd5 $innerZip) + "`n"),[Text.ASCIIEncoding]::new())
+        [IO.File]::WriteAllText((Join-Path $work 'MD5.txt'),(Get-LowerMd5 $innerZip),[Text.ASCIIEncoding]::new())
         $outerDir = Join-Path $work 'outer'
         New-Item -ItemType Directory -Path $outerDir | Out-Null
         Copy-Item $innerZip (Join-Path $outerDir 'upgrade.zip')

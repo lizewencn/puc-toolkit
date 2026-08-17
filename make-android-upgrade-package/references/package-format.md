@@ -1,6 +1,6 @@
 # Android upgrade package format
 
-The module creates `升级包_<versionName>_<versionCode>.zip`. Its outer entries are exactly `upgrade.zip` and `MD5.txt`; `upgrade.zip` contains the original APK filename and `version.json`. `MD5.txt` is the lowercase MD5 of `upgrade.zip` followed by LF.
+The module creates `升级包_<versionName>_<versionCode>.zip`. Its outer entries are exactly `upgrade.zip` and `MD5.txt`; `upgrade.zip` contains the original APK filename and `version.json`. `MD5.txt` is exactly the 32 lowercase ASCII characters of the `upgrade.zip` MD5, with no BOM, spaces, CR, LF, or other trailing bytes.
 
 The final archive is always written to the selected APK's parent directory. Callers do not choose a separate output directory.
 

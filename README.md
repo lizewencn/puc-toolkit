@@ -11,6 +11,16 @@
 | [`refresh-puc-language`](./refresh-puc-language/) | 刷新 Kubernetes 环境中的 PUC 语言资源 | 清理 `nmnginx` 的 locale 目录并重建 Pod，使词条更新生效 |
 | [`replace-env-dist`](./replace-env-dist/) | 将本地前端 `dist` 发布到目标 PUC 环境 | 构建前端项目、上传制品、发现或补充服务、替换容器静态资源 |
 
+## 创建桌面入口
+
+Windows 用户可以在仓库根目录执行以下命令，创建或刷新 PUC 配置工具的桌面入口：
+
+```cmd
+puc-config\scripts\Invoke-PucScript.cmd Install-PucConfigToolShortcut.ps1
+```
+
+命令会在当前用户桌面创建 `PUC Toolkit.lnk`。如果仓库或技能包路径发生变化，再次执行同一命令即可刷新快捷方式。双击桌面的 `PUC Toolkit`，即可在不显示 PowerShell 或命令提示符窗口的情况下打开图形化配置工具。
+
 ## 技能包简介
 
 ### puc-config

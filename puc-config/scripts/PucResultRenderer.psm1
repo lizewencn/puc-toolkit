@@ -99,6 +99,8 @@ function Get-PucResultLabel([string]$Name) {
         succeeded='成功数'; target='目标'; targetSource='目标来源'; taskId='任务 ID'; updateCount='待更新'
         value='值'; verified='已验证'; writeRequired='需要写入'; writesUsed='写入次数'; plannedWrites='计划写入'
         finalPasswordStatus='最终密码'; oldValue='原值'; newValue='新值'; field='字段'; ok='成功'
+        finalPath='升级包路径'; finalName='升级包文件名'; packageName='应用包名'; versionName='版本名称'; versionCode='版本号'
+        apkMd5='APK MD5'; apkSize='APK 大小'; upgradeZipMd5='upgrade.zip MD5'; outputSize='升级包大小'; outputDirectory='输出目录'; description='升级说明'; force='强制升级'
     }
     if ($labels.ContainsKey($Name)) { return $labels[$Name] }
     return $Name

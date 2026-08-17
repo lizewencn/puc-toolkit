@@ -1,6 +1,6 @@
 # PUC Toolkit 技能包
 
-`puc-toolkit` 是一组面向 PUC 环境日常配置、运维和发布工作的 Codex 技能包。目前仓库包含 4 个技能包，分别用于 PUC 配置管理、业务日志采集、语言资源刷新和前端制品部署。
+`puc-toolkit` 是一组面向 PUC 环境日常配置、运维和发布工作的 Codex 工具。目前仓库包含 PUC 配置管理、业务日志采集、语言资源刷新、前端制品部署和 Android 升级包制作能力。
 
 ## 技能包一览
 
@@ -10,6 +10,7 @@
 | [`get-business-log`](./get-business-log/) | 从日志服务环境按账号和时间范围采集业务日志 | 问题排查、业务链路分析、导出指定环境的匹配日志 |
 | [`refresh-puc-language`](./refresh-puc-language/) | 刷新 Kubernetes 环境中的 PUC 语言资源 | 清理 `nmnginx` 的 locale 目录并重建 Pod，使词条更新生效 |
 | [`replace-env-dist`](./replace-env-dist/) | 将本地前端 `dist` 发布到目标 PUC 环境 | 构建前端项目、上传制品、发现或补充服务、替换容器静态资源 |
+| [`make-android-upgrade-package`](./make-android-upgrade-package/) | 从本地 APK 制作 Android 升级包 | 自动解析版本、填写升级说明、生成并校验嵌套升级包 |
 
 ## 创建桌面入口
 

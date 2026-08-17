@@ -24,6 +24,8 @@ Keep newly entered passwords only in the WinForms process. Call `Initialize-PucE
 
 The operation catalog supports:
 
+- Local Android upgrade-package creation without requiring a PUC environment. The user selects an APK, enters a description, chooses the force flag and an output directory, then reviews parsed metadata before generation. The launcher enables `上传` only after a validated package is created. Upload requires a selected configured environment; until the PUC upload API contract is implemented, the button reports that no upload was performed.
+
 - Dispatcher account creation with an environment, prefix, and optional count. Let the account workflow derive the next sequence from the fresh account list.
 - Exact and batch dispatcher password reset. Run authenticated previews first, use temporary manifests for batches, and require confirmation only for query-discovered account sets.
 - Exact or query-based account-information completion, and JSON-file-driven account updates.

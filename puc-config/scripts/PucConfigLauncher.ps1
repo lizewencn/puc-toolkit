@@ -75,6 +75,10 @@ $permissionTargetOptions = @(
     [pscustomobject]@{Label='APP';Value='APP'},
     [pscustomobject]@{Label='WebConfs';Value='WebConfs'}
 )
+$forceUpgradeOptions = @(
+    [pscustomobject]@{Label='否';Value=$false},
+    [pscustomobject]@{Label='是';Value=$true}
+)
 
 $script:Operations = @(
     [pscustomobject]@{Key='create';Label='新增调度账号';Fields=@(
@@ -131,7 +135,13 @@ $script:Operations = @(
         (New-Field 'filePath' '权限菜单 JSON' 'File' '' @() 'JSON 文件 (*.json)|*.json'),
         (New-Field 'target' '导入目标' 'Combo' 'WebPUC' $permissionTargetOptions)
     )},
-    [pscustomobject]@{Key='incident-levels';Label='配置警情等级';Fields=@()}
+    [pscustomobject]@{Key='incident-levels';Label='配置警情等级';Fields=@()},
+    [pscustomobject]@{Key='android-upgrade';Label='制作 Android 升级包';Fields=@(
+        (New-Field 'apkPath' 'APK 文件' 'File' '' @() 'APK 文件 (*.apk)|*.apk'),
+        (New-Field 'description' '升级说明' 'Multiline'),
+        (New-Field 'force' '强制升级' 'Radio' $false $forceUpgradeOptions),
+        (New-Field 'outputDirectory' '输出目录' 'Folder')
+    )}
 )
 $script:ShowEnvironmentPasswordsByDefault = $true
 $script:DefaultNewAccountPassword = '888'
@@ -179,7 +189,7 @@ function Set-PucButtonStyle($Button, [ValidateSet('Primary','Secondary')][string
 }
 
 if ($SelfTest) {
-    if ($script:Operations.Count -ne 16) { throw '操作目录数量不正确。' }
+    if ($script:Operations.Count -ne 17) { throw '操作目录数量不正确。' }
     if (-not $script:ShowEnvironmentPasswordsByDefault) { throw '新增环境的显示密码选项必须默认勾选。' }
     if ($script:DefaultNewAccountPassword -ne '888') { throw '新账号及重置默认密码必须默认为 888。' }
     Assert-NewEnvironmentPasswords -AdminPassword 'admin-test-password' -NewAccountPassword $script:DefaultNewAccountPassword
@@ -188,8 +198,13 @@ if ($SelfTest) {
     if (-not $emptyNewAccountPasswordRejected) { throw '新增环境未拒绝空的新账号及重置默认密码。' }
     $keys = @($script:Operations.Key | Sort-Object -Unique)
     if ($keys.Count -ne $script:Operations.Count) { throw '操作目录中存在重复键。' }
-    $expectedKeys = @('create','reset','reset-query','reset-file','complete','update','personnel-prefix','personnel-exact','policy','force-login','config-export','config-import','license-export','license-import','permission-import','incident-levels')
+    $expectedKeys = @('create','reset','reset-query','reset-file','complete','update','personnel-prefix','personnel-exact','policy','force-login','config-export','config-import','license-export','license-import','permission-import','incident-levels','android-upgrade')
     foreach ($key in $expectedKeys) { if ($key -notin $keys) { throw "操作目录缺少 $key。" } }
+    $upgradeOperation = $script:Operations | Where-Object Key -eq 'android-upgrade'
+    $upgradeKinds = @{}
+    foreach ($field in @($upgradeOperation.Fields)) { $upgradeKinds[[string]$field.Key] = [string]$field.Kind }
+    if ($upgradeKinds.apkPath -ne 'File' -or $upgradeKinds.description -ne 'Multiline' -or $upgradeKinds.force -ne 'Radio' -or $upgradeKinds.outputDirectory -ne 'Folder') { throw 'Android 升级包操作字段定义不正确。' }
+    if ([bool](@($upgradeOperation.Fields | Where-Object Key -eq 'force')[0].Default)) { throw '强制升级必须默认选择否。' }
     if (@($script:Operations | Where-Object Key -eq 'create').Fields.Key -contains 'startSequence') {
         throw '调度账号创建不得询问起始序号。'
     }
@@ -198,7 +213,7 @@ if ($SelfTest) {
     $fullUrlRejected = $false
     try { [void](ConvertTo-PucBaseUrlFromIp 'https://10.161.30.163:16890') } catch { $fullUrlRejected = $true }
     if (-not $fullUrlRejected) { throw '新增环境不得接受包含协议或端口的服务地址。' }
-    $workflowScripts = @('Initialize-PucConfig.ps1','Repair-PucEnvironmentNames.ps1','Get-PucEnvironmentVersion.ps1','Invoke-PucAccounts.ps1','Invoke-PucAccountPasswordReset.ps1','Invoke-PucAccountPasswordResetBatch.ps1','Invoke-PucAccountCompletion.ps1','Invoke-PucAccountUpdate.ps1','Invoke-PucPersonnel.ps1','Invoke-PucFirstLoginPasswordCheck.ps1','Invoke-PucForceLogin.ps1','Invoke-PucConfigTransfer.ps1','Invoke-PucLicense.ps1','Invoke-PucPermissionMenuImport.ps1','Invoke-PucIncidentAlarmLevels.ps1','PucResultRenderer.psm1')
+    $workflowScripts = @('Initialize-PucConfig.ps1','Repair-PucEnvironmentNames.ps1','Get-PucEnvironmentVersion.ps1','Invoke-PucAccounts.ps1','Invoke-PucAccountPasswordReset.ps1','Invoke-PucAccountPasswordResetBatch.ps1','Invoke-PucAccountCompletion.ps1','Invoke-PucAccountUpdate.ps1','Invoke-PucPersonnel.ps1','Invoke-PucFirstLoginPasswordCheck.ps1','Invoke-PucForceLogin.ps1','Invoke-PucConfigTransfer.ps1','Invoke-PucLicense.ps1','Invoke-PucPermissionMenuImport.ps1','Invoke-PucIncidentAlarmLevels.ps1','Invoke-AndroidUpgradePackage.ps1','PucResultRenderer.psm1')
     foreach ($workflowScript in $workflowScripts) {
         if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $workflowScript) -PathType Leaf)) { throw "工作流脚本不存在：$workflowScript" }
     }
@@ -253,6 +268,7 @@ $script:ExecutionState = $null
 $script:FieldControls = @{}
 $script:VersionLookup = $null
 $script:PendingVersionEnvironment = ''
+$script:LastUpgradePackagePath = ''
 
 function Get-EnvironmentEntries {
     $root = Get-PucConfigRoot
@@ -307,10 +323,17 @@ function Get-FieldValue([string]$Key) {
     $entry = $script:FieldControls[$Key]
     switch ($entry.Kind) {
         'Text' { return $entry.Input.Text.Trim() }
+        'Multiline' { return $entry.Input.Text.Trim() }
         'File' { return $entry.Input.Text.Trim() }
+        'Folder' { return $entry.Input.Text.Trim() }
         'Number' { return [int]$entry.Input.Value }
         'Check' { return [bool]$entry.Input.Checked }
         'Combo' { return [string]$entry.Input.SelectedItem.Value }
+        'Radio' {
+            $selected = @($entry.Input.Controls | Where-Object { $_ -is [Windows.Forms.RadioButton] -and $_.Checked } | Select-Object -First 1)
+            if ($selected.Count -eq 0) { return $false }
+            return [bool]$selected[0].Tag
+        }
     }
 }
 
@@ -463,6 +486,14 @@ $clearButton.Location = New-Object Drawing.Point(148,14)
 $clearButton.Size = New-Object Drawing.Size(112,34)
 Set-PucButtonStyle $clearButton
 $actionPanel.Controls.Add($clearButton)
+
+$uploadButton = New-Object Windows.Forms.Button
+$uploadButton.Text = '上传'
+$uploadButton.Location = New-Object Drawing.Point(272,14)
+$uploadButton.Size = New-Object Drawing.Size(112,34)
+$uploadButton.Enabled = $false
+Set-PucButtonStyle $uploadButton 'Primary'
+$actionPanel.Controls.Add($uploadButton)
 
 $confirmButton = New-Object Windows.Forms.Button
 $confirmButton.Text = '确认执行'
@@ -770,6 +801,13 @@ function New-InputControl($Field, [int]$X, [int]$Y, [int]$Width) {
             $input.Location = New-Object Drawing.Point($X,$controlY)
             $input.Size = New-Object Drawing.Size($Width,27)
         }
+        'Multiline' {
+            $input = New-Object Windows.Forms.TextBox
+            $input.Multiline = $true
+            $input.ScrollBars = 'Vertical'
+            $input.Location = New-Object Drawing.Point($X,$controlY)
+            $input.Size = New-Object Drawing.Size($Width,54)
+        }
         'Number' {
             $input = New-Object Windows.Forms.NumericUpDown
             $input.Minimum = 0
@@ -821,6 +859,38 @@ function New-InputControl($Field, [int]$X, [int]$Y, [int]$Width) {
             $inputPanel.Controls.Add($browse)
             $additionalControls += $browse
         }
+        'Folder' {
+            $input = New-Object Windows.Forms.TextBox
+            $input.Location = New-Object Drawing.Point($X,$controlY)
+            $input.Size = New-Object Drawing.Size(($Width - 82),27)
+            $browse = New-Object Windows.Forms.Button
+            $browse.Text = '选择...'
+            $browse.Location = New-Object Drawing.Point(($X + $Width - 74),($controlY - 3))
+            $browse.Size = New-Object Drawing.Size(74,32)
+            Set-PucButtonStyle $browse
+            $textBox = $input
+            $browse.Add_Click({
+                $dialog = New-Object Windows.Forms.FolderBrowserDialog
+                if ($dialog.ShowDialog($form) -eq [Windows.Forms.DialogResult]::OK) { $textBox.Text = $dialog.SelectedPath }
+                $dialog.Dispose()
+            }.GetNewClosure())
+            $inputPanel.Controls.Add($browse)
+            $additionalControls += $browse
+        }
+        'Radio' {
+            $input = New-Object Windows.Forms.FlowLayoutPanel
+            $input.Location = New-Object Drawing.Point($X,$controlY)
+            $input.Size = New-Object Drawing.Size($Width,30)
+            $input.FlowDirection = 'LeftToRight'
+            foreach ($option in $Field.Options) {
+                $radio = New-Object Windows.Forms.RadioButton
+                $radio.Text = [string]$option.Label
+                $radio.Tag = [bool]$option.Value
+                $radio.Checked = ([bool]$option.Value -eq [bool]$Field.Default)
+                $radio.AutoSize = $true
+                $input.Controls.Add($radio)
+            }
+        }
         default { throw "不支持的字段类型：$($Field.Kind)" }
     }
     $inputPanel.Controls.Add($input)
@@ -828,6 +898,8 @@ function New-InputControl($Field, [int]$X, [int]$Y, [int]$Width) {
 }
 
 function Rebuild-Inputs {
+    $script:LastUpgradePackagePath = ''
+    $uploadButton.Enabled = $false
     $inputPanel.SuspendLayout()
     $inputPanel.Controls.Clear()
     $script:FieldControls = @{}
@@ -1116,6 +1188,16 @@ function Start-RequestedWorkflow {
     }
     $script:ExecutionState = $state
     switch ($operation) {
+        'android-upgrade' {
+            $path = Assert-ExistingFile ([string](Get-FieldValue 'apkPath')) @('.apk') 'APK 文件'
+            $description = [string](Get-FieldValue 'description')
+            if ([string]::IsNullOrWhiteSpace($description)) { throw '升级说明不能为空。' }
+            $outputDirectory = [string](Get-FieldValue 'outputDirectory')
+            if ([string]::IsNullOrWhiteSpace($outputDirectory) -or -not (Test-Path -LiteralPath $outputDirectory -PathType Container)) { throw '请选择有效的输出目录。' }
+            $state.Data.ApkPath=$path;$state.Data.Description=$description;$state.Data.Force=[bool](Get-FieldValue 'force');$state.Data.OutputDirectory=(Resolve-Path -LiteralPath $outputDirectory).Path
+            $script:LastUpgradePackagePath='';$uploadButton.Enabled=$false
+            Start-Stage 'android-upgrade-inspect' @('Invoke-AndroidUpgradePackage.ps1','-Action','Inspect','-ApkPath',$path)
+        }
         'create' {
             $prefix = [string](Get-FieldValue 'prefix')
             if ($prefix -notmatch '^[A-Za-z0-9_]+$') { throw '账号前缀只能包含字母、数字和下划线。' }
@@ -1216,6 +1298,22 @@ $timer.Add_Tick({
     $json=Get-LastJsonObject $result.Text
     try {
         switch($stage){
+            'android-upgrade-inspect' {
+                if ([string]$json.status -ne 'inspected' -or [string]::IsNullOrWhiteSpace([string]$json.apkMd5)) { throw 'APK 解析结果无效。' }
+                $manifest=New-TempManifest 'android-upgrade';$script:ExecutionState.TempPaths.Add($manifest);$script:ExecutionState.Data.Manifest=$manifest
+                $document=[ordered]@{apkPath=[string]$json.apkPath;description=[string]$script:ExecutionState.Data.Description;force=[bool]$script:ExecutionState.Data.Force;outputDirectory=[string]$script:ExecutionState.Data.OutputDirectory;versionCode=[long]$json.versionCode;versionName=[string]$json.versionName;apkMd5=[string]$json.apkMd5;apkSize=[long]$json.apkSize}
+                [IO.File]::WriteAllText($manifest,($document|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+                Start-Stage 'android-upgrade-preview' @('Invoke-AndroidUpgradePackage.ps1','-Action','Preview','-ManifestPath',$manifest);return
+            }
+            'android-upgrade-preview' {
+                Request-PreviewConfirmation -Prompt '请核对 APK、版本、升级说明、强制升级状态和输出目录。' -NextStage 'android-upgrade-build' -Arguments @('Invoke-AndroidUpgradePackage.ps1','-Action','Build','-ManifestPath',$script:ExecutionState.Data.Manifest) -CancelText '用户已取消制作升级包。';return
+            }
+            'android-upgrade-build' {
+                $path=[string]$json.finalPath
+                if ([string]$json.status -ne 'created' -or [string]::IsNullOrWhiteSpace($path) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { throw '升级包制作结果缺少有效文件。' }
+                $script:LastUpgradePackagePath=$path;$uploadButton.Enabled=$true
+                Finish-Execution 0;return
+            }
             'reset-preview' {
                 $hash=[string]$json.snapshotHash;if($hash -notmatch '^[A-Fa-f0-9]{64}$'){throw '预检未返回有效的账号快照哈希。'}
                 Start-Stage 'reset-live' @('Invoke-PucAccountPasswordReset.ps1','-Environment',$script:ExecutionState.Environment,'-Account',$script:ExecutionState.Data.Account,'-Live','-ConfirmLive','-ExpectedSnapshotHash',$hash);return
@@ -1307,13 +1405,25 @@ $reloadButton.Add_Click({
     try{Load-Environments;$statusLabel.Text='环境列表已刷新';$statusLabel.ForeColor=[Drawing.Color]::FromArgb(92,102,110)}
     catch{[Windows.Forms.MessageBox]::Show($form,$_.Exception.Message,'PUC Toolkit','OK','Error')|Out-Null}
 })
-$clearButton.Add_Click({Clear-PucResultView;$statusLabel.Text='就绪';$statusLabel.ForeColor=[Drawing.Color]::FromArgb(92,102,110)})
+$clearButton.Add_Click({$script:LastUpgradePackagePath='';$uploadButton.Enabled=$false;Clear-PucResultView;$statusLabel.Text='就绪';$statusLabel.ForeColor=[Drawing.Color]::FromArgb(92,102,110)})
 $confirmButton.Add_Click({Confirm-PendingPreview})
 $cancelConfirmationButton.Add_Click({Cancel-PendingPreview})
+$uploadButton.Add_Click({
+    if ([string]::IsNullOrWhiteSpace($script:LastUpgradePackagePath) -or -not (Test-Path -LiteralPath $script:LastUpgradePackagePath -PathType Leaf)) {
+        $uploadButton.Enabled=$false
+        [Windows.Forms.MessageBox]::Show($form,'请先成功制作升级包。','上传升级包','OK','Warning')|Out-Null
+        return
+    }
+    if ($null -eq $environmentBox.SelectedItem) {
+        [Windows.Forms.MessageBox]::Show($form,'请先新增或选择 PUC 环境后再上传。','上传升级包','OK','Warning')|Out-Null
+        return
+    }
+    [Windows.Forms.MessageBox]::Show($form,'PUC 升级包上传接口尚未配置，未执行上传。','上传升级包','OK','Information')|Out-Null
+})
 $runButton.Add_Click({
     $startedAt=[datetime]::Now
     try{
-        if($null -eq $environmentBox.SelectedItem){throw '请选择环境。'}
+        if($null -eq $environmentBox.SelectedItem -and [string]$operationBox.SelectedItem.Key -ne 'android-upgrade'){throw '请选择环境。'}
         Set-ControlsEnabled $false;Clear-PucResultView;$statusLabel.Text='正在准备...';$statusLabel.ForeColor=[Drawing.Color]::FromArgb(92,102,110)
         Start-RequestedWorkflow
     }catch{
@@ -1337,6 +1447,7 @@ $form.Add_FormClosing({
 
 if ($UiSelfTest) {
     try {
+        if ($uploadButton.Enabled) { throw '上传按钮初始状态必须禁用。' }
         $confirmationOutputs = [Collections.Generic.List[string]]::new()
         $confirmationOutputs.Add('{"status":"preview","accounts":[{"account":"mhw1"},{"account":"mhw2"}]}')
         $script:ExecutionState = [pscustomobject]@{

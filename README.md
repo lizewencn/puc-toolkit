@@ -10,7 +10,7 @@
 | [`get-business-log`](./get-business-log/) | 从日志服务环境按账号和时间范围采集业务日志 | 问题排查、业务链路分析、导出指定环境的匹配日志 |
 | [`refresh-puc-language`](./refresh-puc-language/) | 刷新 Kubernetes 环境中的 PUC 语言资源 | 清理 `nmnginx` 的 locale 目录并重建 Pod，使词条更新生效 |
 | [`replace-env-dist`](./replace-env-dist/) | 将本地前端 `dist` 发布到目标 PUC 环境 | 构建前端项目、上传制品、发现或补充服务、替换容器静态资源 |
-| [`make-android-upgrade-package`](./make-android-upgrade-package/) | 从本地 APK 制作 Android 升级包 | 自动解析版本、填写升级说明、生成并校验嵌套升级包 |
+| [`make-android-upgrade-package`](./make-android-upgrade-package/) | 从本地 APK 制作 Android 升级包 | 自动解析版本、填写升级说明，并在 APK 所在目录生成和校验嵌套升级包 |
 
 ## 创建桌面入口
 

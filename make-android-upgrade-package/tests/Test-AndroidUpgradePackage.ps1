@@ -59,16 +59,17 @@ try {
     $defaultToolResult = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $command -Action Inspect -ApkPath $apkPath | Select-Object -Last 1 | ConvertFrom-Json
     if ($defaultToolResult.message -match 'Join-Path|empty string') { throw 'default bundled aapt path was not resolved after parameter binding.' }
     Write-Output 'PASS default bundled aapt path'
-    $commandOutput = Join-Path $testRoot 'command-output'
-    New-Item -ItemType Directory -Path $commandOutput | Out-Null
     $manifestPath = Join-Path $testRoot 'manifest.json'
-    $manifest = [ordered]@{apkPath=$apkPath;description='命令测试';force=$true;outputDirectory=$commandOutput;versionCode=$info.VersionCode;versionName=$info.VersionName;apkMd5=$info.Md5;apkSize=$info.Size}
+    $manifest = [ordered]@{apkPath=$apkPath;description='命令测试';force=$true;versionCode=$info.VersionCode;versionName=$info.VersionName;apkMd5=$info.Md5;apkSize=$info.Size}
     [IO.File]::WriteAllText($manifestPath,($manifest | ConvertTo-Json),[Text.UTF8Encoding]::new($false))
     $previewJson = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $command -Action Preview -ManifestPath $manifestPath -AaptPath $fakeAapt | Select-Object -Last 1 | ConvertFrom-Json
     Assert-Equal $previewJson.status 'previewed' 'preview command status'
     $buildJson = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $command -Action Build -ManifestPath $manifestPath -AaptPath $fakeAapt | Select-Object -Last 1 | ConvertFrom-Json
     Assert-Equal $buildJson.status 'created' 'build command status'
+    Assert-Equal $buildJson.finalName (Split-Path $buildJson.finalPath -Leaf) 'build command final name'
+    Assert-Equal $buildJson.results[0].status 'build-complete' 'build command result status'
     Assert-Equal (Test-Path -LiteralPath $buildJson.finalPath -PathType Leaf) $true 'build command output'
+    Assert-Equal (Split-Path $buildJson.finalPath -Parent) $testRoot 'build beside source APK'
 } finally {
     Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

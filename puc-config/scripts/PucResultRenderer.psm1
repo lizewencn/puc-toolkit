@@ -113,6 +113,7 @@ function Get-PucStatusText([string]$Value) {
         'planned'='已检查'; 'planned-offline'='本地检查完成'; 'previewed'='预检完成'; 'ready'='待执行'
         'skipped'='已跳过'; 'unchanged'='无需变更'; 'updated'='已更新'; 'no-change'='无需变更'
         'password-reset'='密码已重置'; 'preview-failed'='预检失败'; 'conflict-skipped'='冲突已跳过'
+        'build-complete'='已制作完成'
         'true'='是'; 'false'='否'
     }
     if ($statuses.ContainsKey($Value)) { return $statuses[$Value] }

@@ -139,8 +139,7 @@ $script:Operations = @(
     [pscustomobject]@{Key='android-upgrade';Label='制作 Android 升级包';Fields=@(
         (New-Field 'apkPath' 'APK 文件' 'File' '' @() 'APK 文件 (*.apk)|*.apk'),
         (New-Field 'description' '升级说明' 'Multiline'),
-        (New-Field 'force' '强制升级' 'Radio' $false $forceUpgradeOptions),
-        (New-Field 'outputDirectory' '输出目录' 'Folder')
+        (New-Field 'force' '强制升级' 'Radio' $false $forceUpgradeOptions)
     )}
 )
 $script:ShowEnvironmentPasswordsByDefault = $true
@@ -203,7 +202,7 @@ if ($SelfTest) {
     $upgradeOperation = $script:Operations | Where-Object Key -eq 'android-upgrade'
     $upgradeKinds = @{}
     foreach ($field in @($upgradeOperation.Fields)) { $upgradeKinds[[string]$field.Key] = [string]$field.Kind }
-    if ($upgradeKinds.apkPath -ne 'File' -or $upgradeKinds.description -ne 'Multiline' -or $upgradeKinds.force -ne 'Radio' -or $upgradeKinds.outputDirectory -ne 'Folder') { throw 'Android 升级包操作字段定义不正确。' }
+    if ($upgradeKinds.apkPath -ne 'File' -or $upgradeKinds.description -ne 'Multiline' -or $upgradeKinds.force -ne 'Radio' -or $upgradeKinds.ContainsKey('outputDirectory')) { throw 'Android 升级包操作字段定义不正确。' }
     if ([bool](@($upgradeOperation.Fields | Where-Object Key -eq 'force')[0].Default)) { throw '强制升级必须默认选择否。' }
     if (@($script:Operations | Where-Object Key -eq 'create').Fields.Key -contains 'startSequence') {
         throw '调度账号创建不得询问起始序号。'
@@ -1192,9 +1191,7 @@ function Start-RequestedWorkflow {
             $path = Assert-ExistingFile ([string](Get-FieldValue 'apkPath')) @('.apk') 'APK 文件'
             $description = [string](Get-FieldValue 'description')
             if ([string]::IsNullOrWhiteSpace($description)) { throw '升级说明不能为空。' }
-            $outputDirectory = [string](Get-FieldValue 'outputDirectory')
-            if ([string]::IsNullOrWhiteSpace($outputDirectory) -or -not (Test-Path -LiteralPath $outputDirectory -PathType Container)) { throw '请选择有效的输出目录。' }
-            $state.Data.ApkPath=$path;$state.Data.Description=$description;$state.Data.Force=[bool](Get-FieldValue 'force');$state.Data.OutputDirectory=(Resolve-Path -LiteralPath $outputDirectory).Path
+            $state.Data.ApkPath=$path;$state.Data.Description=$description;$state.Data.Force=[bool](Get-FieldValue 'force')
             $script:LastUpgradePackagePath='';$uploadButton.Enabled=$false
             Start-Stage 'android-upgrade-inspect' @('Invoke-AndroidUpgradePackage.ps1','-Action','Inspect','-ApkPath',$path)
         }
@@ -1301,7 +1298,7 @@ $timer.Add_Tick({
             'android-upgrade-inspect' {
                 if ([string]$json.status -ne 'inspected' -or [string]::IsNullOrWhiteSpace([string]$json.apkMd5)) { throw 'APK 解析结果无效。' }
                 $manifest=New-TempManifest 'android-upgrade';$script:ExecutionState.TempPaths.Add($manifest);$script:ExecutionState.Data.Manifest=$manifest
-                $document=[ordered]@{apkPath=[string]$json.apkPath;description=[string]$script:ExecutionState.Data.Description;force=[bool]$script:ExecutionState.Data.Force;outputDirectory=[string]$script:ExecutionState.Data.OutputDirectory;versionCode=[long]$json.versionCode;versionName=[string]$json.versionName;apkMd5=[string]$json.apkMd5;apkSize=[long]$json.apkSize}
+                $document=[ordered]@{apkPath=[string]$json.apkPath;description=[string]$script:ExecutionState.Data.Description;force=[bool]$script:ExecutionState.Data.Force;versionCode=[long]$json.versionCode;versionName=[string]$json.versionName;apkMd5=[string]$json.apkMd5;apkSize=[long]$json.apkSize}
                 [IO.File]::WriteAllText($manifest,($document|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
                 Start-Stage 'android-upgrade-preview' @('Invoke-AndroidUpgradePackage.ps1','-Action','Preview','-ManifestPath',$manifest);return
             }

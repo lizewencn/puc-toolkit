@@ -31,7 +31,7 @@ The operation collects:
 - A local `.apk` file selected with a file picker.
 - A required upgrade description entered by the user.
 - A `force` choice presented as `否` and `是` radio buttons, defaulting to `否`.
-- An output directory selected with a folder picker.
+- No output-directory input. Derive the output directory from the selected APK's parent directory.
 
 After APK selection, inspect it automatically and display:
 
@@ -42,9 +42,11 @@ After APK selection, inspect it automatically and display:
 - File size.
 - APK MD5.
 
-Disable package generation until the APK has been inspected successfully and all required inputs are complete. Before generation, show a confirmation preview containing the selected APK, parsed version information, description, force choice, and destination.
+Disable package generation until the APK has been inspected successfully and all required inputs are complete. Before generation, show a confirmation preview containing the selected APK, parsed version information, description, force choice, and the derived destination beside the APK.
 
 Run generation through the launcher's existing hidden child-workflow mechanism. Show progress, structured success or failure output, and the final package path in the existing result area. Do not expose command windows.
+
+Do not show a completion dialog and do not open File Explorer. After a successful build, supplement the existing `执行摘要` with the final path, filename, package size, APK MD5, and `upgrade.zip` MD5. Show the created file in `执行结果` with status `已制作完成`.
 
 Add a separate `上传` button. Keep it disabled until the current launcher session has successfully created and validated a package. Clicking it must first require a currently selected, configured PUC environment. If no valid environment is available, stop locally with a Chinese instruction to add or select an environment. The PUC upload request itself is outside the first implementation phase until its API contract is supplied; during this phase, a valid-environment click reports explicitly that the upload interface is not configured and must never claim that an upload occurred.
 

@@ -6,7 +6,7 @@ Use `scripts/Invoke-PucAccountPasswordReset.ps1` for every request to reset, cha
 
 Match the PUC frontend reset-password behavior:
 
-1. Query `account_list_request` and require exactly one case-insensitive exact `dispatcher_account` match.
+1. Query `account_list_request` and require exactly one case-insensitive exact `dispatcher_account` match. Match the verified frontend request shape: send `user_id`, `realm`, paging, `querykey`, `lock_query`, and `filter`, but do not add `puc_id`; on some PUC versions, adding `puc_id` changes the account scope and can return an empty list even when the token-authorized account query has matches.
 2. Start the `update_account` payload from that fresh complete account record so all returned account parameters remain unchanged.
 3. Set `cmd_name` to `update_account`.
 4. Build one payload from the fresh record, preserve all other fields, set `is_change_pwd` to `1`, and normalize `imei_list` exactly as the frontend does because the API requires an array.

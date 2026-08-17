@@ -2,7 +2,6 @@
 param(
     [Parameter(Mandatory)][string]$Environment,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9_]+$')][string]$Prefix,
-    [Parameter(Mandatory)][ValidateRange(0,999)][int]$StartSequence,
     [ValidateRange(1,1000)][int]$Count = 1,
     [long]$DispatchStart,
     [string]$RoleName = '',
@@ -41,7 +40,7 @@ if (-not $PlanOnly) {
 $temporaryPath = Join-Path ([IO.Path]::GetTempPath()) ("puc-config-accounts-" + [guid]::NewGuid().ToString('N') + '.json')
 $batchConfig = [ordered]@{
     baseUrl=$environmentConfig.baseUrl; realm=$environmentConfig.realm; pucId=[string]$environmentConfig.pucId
-    ipSuffix=$ipSuffix; startSequence=$StartSequence; count=$Count; accountPrefix=$Prefix; aliasPrefix=''
+    ipSuffix=$ipSuffix; count=$Count; accountPrefix=$Prefix; aliasPrefix=''
     dispatchStart=if ($PSBoundParameters.ContainsKey('DispatchStart')) { $DispatchStart } else { $null }
     defaultAccountPassword=$passwordCipher; highestRoleName=$RoleName; loginTerminalName='Dispatch APP'; rootOrganizationName=$RootOrganizationName
     allowInsecureTls=[bool]$environmentConfig.allowInsecureTls; requestDelayMs=250; maxReadRetries=0; maxScanCount=[Math]::Max($Count * 10,100)

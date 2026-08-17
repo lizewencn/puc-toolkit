@@ -21,7 +21,7 @@ if (($PlanOnly -or $DryRun) -and ([string]::IsNullOrWhiteSpace($Account) -eq [st
 }
 if (($DryRun -or $Live) -and [string]::IsNullOrWhiteSpace($ManifestPath)) { throw 'DryRun and Live require ManifestPath.' }
 if ($Live -and -not $ConfirmLive) { throw 'Live account completion requires ConfirmLive after explicit confirmation.' }
-if ($Environment -notmatch '^[A-Za-z0-9_-]+$') { throw 'Environment contains unsupported characters.' }
+if ($Environment -notmatch '^[A-Za-z0-9_.-]+$') { throw 'Environment contains unsupported characters.' }
 if ($Account -and $Account -notmatch '^[A-Za-z0-9_.@-]+$') { throw 'Account contains unsupported characters.' }
 if ($Query -and $Query -notmatch '^[A-Za-z0-9_.@-]+$') { throw 'Query contains unsupported characters.' }
 

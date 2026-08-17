@@ -4,9 +4,9 @@ Use `scripts/Invoke-PucAccounts.ps1`. Authentication is shared through the token
 
 ## Inputs
 
-Resolve these per batch instead of persisting them in `config.json`: exact environment, account prefix, start sequence, optional count, optional dispatch-number start, optional exact role name, and optional exact root organization name. When the user does not specify a count, use `1`; do not ask for confirmation of that default.
+Resolve these per batch instead of persisting them in `config.json`: exact environment, account prefix, optional count, optional dispatch-number start, optional exact role name, and optional exact root organization name. When the user does not specify a count, use `1`; do not ask for confirmation of that default. Never ask the user for an account start sequence.
 
-Account naming is `<prefix><environment-suffix><NNN>`. Derive `environment-suffix` from the last IPv4 octet of the selected environment's `baseUrl`; do not derive it from the local environment name. Keep the octet in its natural decimal form without zero-padding. For example, prefix `mhw`, environment host `10.161.30.163`, and sequence `1` produce account `mhw163001` and alias `mhw163001_alias`. A supplied dispatch-number start increments by one; otherwise use a monotonic millisecond value.
+Account naming is `<prefix><environment-suffix><NNN>`. Derive `environment-suffix` from the last IPv4 octet of the selected environment's `baseUrl`; do not derive it from the local environment name. Keep the octet in its natural decimal form without zero-padding. Derive the next sequence from the target environment's fresh account-list response: consider only exact names matching `<prefix><environment-suffix><three-digits>`, take the greatest numeric suffix, and start at that value plus one. Start at `001` when no exact generated account exists. Do not fill gaps. For example, if `mhw163001`, `mhw163002`, and `mhw163004` exist, create `mhw163005` next with alias `mhw163005_alias`. Stop without writing when the greatest sequence is `999` or the requested batch would exceed it. A supplied dispatch-number start increments by one; otherwise use a monotonic millisecond value.
 
 Before generating candidates, call `account_list_request` once with `<prefix><environment-suffix>` as `querykey` and fixed `page_sizes: 30`. Use that response to build in-memory sets of existing account names and dispatch numbers. Generate the complete batch and all `add_account` request parameters before sending the first write. Do not query once per candidate account or dispatch number.
 
@@ -27,7 +27,6 @@ The default account password comes from the selected environment's plaintext `ne
 <skill>\scripts\Invoke-PucScript.cmd Invoke-PucAccounts.ps1 `
   -Environment <environment> `
   -Prefix <prefix> `
-  -StartSequence <start> `
   -Count <count, default 1> `
   -Live `
   -ConfirmLive
@@ -39,6 +38,6 @@ If it stops with `ACCOUNT_LOOKUP_DECISION_REQUIRED`, show the returned count and
 4. After the live creation batch finishes, query the login policy once. Report whether "dispatcher first-login password validation" is enabled. If disabled, tell the user they can run the first-login password validation setting workflow; do not enable it automatically. If the query fails, preserve the creation result and report that policy status is unknown.
 5. Return prepared and created accounts, generated range, duplicates, selected role, authorization lookups, final per-item results, and `firstLoginPasswordValidation` directly to the user. Do not persist dry-run or live reports.
 
-Omit `-Count` when the user did not provide it; the script defaults it to `1`. The resulting single-account request is already authorized by the user's creation instruction and must not trigger another confirmation prompt.
+Omit `-Count` when the user did not provide it; the script defaults it to `1`. The fresh prefix lookup deterministically derives the generated range, so do not ask for a start sequence or another business confirmation. The resulting request is already authorized by the user's exact environment, prefix, and count instruction.
 
 Do not retry `add_account`. Stop on the first failed or uncertain response.

@@ -160,14 +160,14 @@ public static class PucConsoleWindow {
 try {
     [void](Test-PucConfigWriteAccess -ConfigRoot $root)
     $cookieJar = @{}
-    function Invoke-JsonRequest($Body) {
-        return Invoke-PucJsonRequest -Uri ([uri]($baseUri.AbsoluteUri.TrimEnd('/') + '/confs')) -Body $Body -AllowInsecureTls ([bool]$environmentConfig.allowInsecureTls) -CookieJar $cookieJar
+    function Invoke-JsonRequest($Body, [hashtable]$Headers = @{}) {
+        return Invoke-PucJsonRequest -Uri ([uri]($baseUri.AbsoluteUri.TrimEnd('/') + '/confs')) -Body $Body -Headers $Headers -AllowInsecureTls ([bool]$environmentConfig.allowInsecureTls) -CookieJar $cookieJar
     }
 
     # Match the working manager: common configuration, captcha, user input, then login in one process.
     $common = Invoke-JsonRequest ([ordered]@{ cmd_name='common_cfg_request' })
-    $pucId = [string](Get-PucPropertyPath -Object $common -Path ([string]$adapter.pucId.responsePath))
-    if ([string]::IsNullOrWhiteSpace($pucId)) { throw 'Common configuration did not return a PUC ID.' }
+    $bootstrapPucId = [string](Get-PucPropertyPath -Object $common -Path ([string]$adapter.pucId.responsePath))
+    if ([string]::IsNullOrWhiteSpace($bootstrapPucId)) { throw 'Pre-login common configuration did not return a PUC ID.' }
 
     $captcha = Invoke-JsonRequest ([ordered]@{ cmd_name='puc_get_captcha'; height=34; width=120 })
     $captchaFetchedAt = [DateTimeOffset]::UtcNow
@@ -206,7 +206,7 @@ try {
         puc_passwd=ConvertTo-PucDesHex $password
         captcha_id=$captchaId
         captcha_value=$captchaValue
-        puc_id=$pucId
+        puc_id=$bootstrapPucId
         cmd_name='login_puc_account'
     })
     if ([string]$response.result -ne '0' -or [string]::IsNullOrWhiteSpace([string]$response.token)) {
@@ -217,7 +217,18 @@ try {
         })
         return
     }
-    Set-EnvironmentAuth -Token ([string]$response.token) -PucId $pucId
+    $authenticatedCommon = Invoke-JsonRequest ([ordered]@{ cmd_name='common_cfg_request' }) @{ token=[string]$response.token }
+    if ($null -eq $authenticatedCommon) {
+        throw 'Post-login common configuration returned no response document. Authentication data was not saved.'
+    }
+    if ([string]$authenticatedCommon.result -ne '0') {
+        throw (New-PucApiFailureMessage -Operation 'Post-login common configuration' -Response $authenticatedCommon)
+    }
+    $effectivePucId = [string](Get-PucPropertyPath -Object $authenticatedCommon -Path ([string]$adapter.pucId.responsePath))
+    if ([string]::IsNullOrWhiteSpace($effectivePucId)) {
+        throw 'Post-login common configuration did not return an effective PUC ID. Authentication data was not saved.'
+    }
+    Set-EnvironmentAuth -Token ([string]$response.token) -PucId $effectivePucId
     Write-AtomicJson -Path $resultPath -Value ([ordered]@{
         status='login_succeeded'; environment=$Environment; tokenSaved=$true
     })

@@ -250,7 +250,23 @@ function Get-PucEnvironment {
     $path = Join-Path $ConfigRoot 'config.json'
     $config = Read-PucJson -Path $path -Default $null
     if ($null -eq $config) { throw "Missing config file: $path" }
-    $matches = @($config.environments | Where-Object { $_.name -eq $Name })
+
+    $lookupName = $Name
+    $legacyMatches = @($config.environments | Where-Object { $_.name -eq $Name })
+    if ($legacyMatches.Count -gt 1) {
+        throw "Environment '$Name' is ambiguous because it matches $($legacyMatches.Count) legacy entries in $path"
+    }
+    if ($legacyMatches.Count -eq 1) {
+        $lookupName = Get-PucEnvironmentNameFromBaseUrl -BaseUrl ([string]$legacyMatches[0].baseUrl)
+    }
+
+    $repair = Repair-PucEnvironmentNames -ConfigRoot $ConfigRoot -Apply
+    if ([int]$repair.changed -gt 0) {
+        $config = Read-PucJson -Path $path -Default $null
+        if ($null -eq $config) { throw "Config file disappeared after environment-name normalization: $path" }
+    }
+
+    $matches = @($config.environments | Where-Object { $_.name -eq $lookupName })
     if ($matches.Count -ne 1) { throw "Environment '$Name' resolved to $($matches.Count) entries in $path" }
     return $matches[0]
 }
@@ -269,6 +285,104 @@ function Get-PucEntry {
     param($Document, [Parameter(Mandatory)][string]$Name)
     if ($null -eq $Document) { return $null }
     return @($Document.environments | Where-Object { $_.name -eq $Name }) | Select-Object -First 1
+}
+
+function Get-PucEnvironmentNameFromBaseUrl {
+    param([Parameter(Mandatory)]$BaseUrl)
+    try { $uri = [uri]$BaseUrl }
+    catch { throw "Environment baseUrl is invalid: $BaseUrl" }
+    if (-not $uri.IsAbsoluteUri -or $uri.Scheme -notin @('http','https')) { throw "Environment baseUrl must be an absolute HTTP or HTTPS URL: $BaseUrl" }
+    $name = $uri.DnsSafeHost.Trim().ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($name) -or $name -notmatch '^[A-Za-z0-9.-]+$') {
+        throw "Environment baseUrl must contain a supported IPv4 address or DNS host: $BaseUrl"
+    }
+    return $name
+}
+
+function Repair-PucEnvironmentNames {
+    param([Parameter(Mandatory)][string]$ConfigRoot, [switch]$Apply)
+    $path = Join-Path $ConfigRoot 'config.json'
+    $document = Read-PucJson -Path $path -Default $null
+    if ($null -eq $document) { throw "Missing config file: $path" }
+    $entries = @($document.environments)
+    $canonicalNames = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $repairs = [Collections.Generic.List[object]]::new()
+    $resolvedNames = [Collections.Generic.List[string]]::new()
+    foreach ($entry in $entries) {
+        $canonicalName = Get-PucEnvironmentNameFromBaseUrl -BaseUrl ([string]$entry.baseUrl)
+        if (-not $canonicalNames.Add($canonicalName)) {
+            throw "Multiple environment entries resolve to the same complete host '$canonicalName'. Resolve the duplicate before normalization."
+        }
+        $resolvedNames.Add($canonicalName)
+        $oldName = [string]$entry.name
+        if (-not [string]::Equals($oldName,$canonicalName,[StringComparison]::Ordinal)) {
+            $repairs.Add([pscustomobject]@{oldName=$oldName;newName=$canonicalName;baseUrl=[string]$entry.baseUrl})
+        }
+    }
+    if ($Apply -and $repairs.Count -gt 0) {
+        for ($index = 0; $index -lt $entries.Count; $index++) { $entries[$index].name = $resolvedNames[$index] }
+        Write-PucJson -Path $path -Value $document
+    }
+    [pscustomobject]@{
+        status=if($repairs.Count -eq 0){'unchanged'}elseif($Apply){'normalized'}else{'normalization-required'}
+        configPath=$path;changed=$repairs.Count;repairs=@($repairs);writeUsed=([bool]$Apply -and $repairs.Count -gt 0)
+    }
+}
+
+function Initialize-PucEnvironmentConfig {
+    param(
+        [Parameter(Mandatory)][string]$ConfigRoot,
+        [Parameter(Mandatory)][uri]$BaseUrl,
+        [Parameter(Mandatory)][string]$Realm,
+        [Parameter(Mandatory)][string]$AdminAccount,
+        [string]$Name = '',
+        [bool]$AllowInsecureTls = $false,
+        [string]$TemplateEnvironment = '',
+        [switch]$UseProvidedPasswords,
+        [string]$AdminPassword = '',
+        [string]$NewAccountPassword = ''
+    )
+    $canonicalName = Get-PucEnvironmentNameFromBaseUrl -BaseUrl $BaseUrl
+    if (-not [string]::IsNullOrWhiteSpace($Name) -and -not [string]::Equals($Name,$canonicalName,[StringComparison]::OrdinalIgnoreCase)) {
+        throw "Name must equal the complete baseUrl host '$canonicalName'. Omit Name to derive it automatically."
+    }
+    if ($UseProvidedPasswords -and -not [string]::IsNullOrWhiteSpace($TemplateEnvironment)) { throw 'Provided passwords and TemplateEnvironment cannot be used together.' }
+    if ($UseProvidedPasswords -and [string]::IsNullOrEmpty($AdminPassword)) { throw 'AdminPassword must not be empty when provided passwords are selected.' }
+
+    New-Item -ItemType Directory -Force -Path $ConfigRoot | Out-Null
+    $configPath = Join-Path $ConfigRoot 'config.json'
+    if (Test-Path -LiteralPath $configPath -PathType Leaf) { $null = Repair-PucEnvironmentNames -ConfigRoot $ConfigRoot -Apply }
+    $existing = Read-PucJson -Path $configPath -Default $null
+    $previous = Get-PucEntry -Document $existing -Name $canonicalName
+    $template = $null
+    if (-not [string]::IsNullOrWhiteSpace($TemplateEnvironment)) {
+        if ([string]::Equals($TemplateEnvironment,$canonicalName,[StringComparison]::OrdinalIgnoreCase)) { throw 'TemplateEnvironment must differ from the new environment.' }
+        $template = Get-PucEntry -Document $existing -Name $TemplateEnvironment
+        if ($null -eq $template) { throw "Template environment '$TemplateEnvironment' does not exist in config.json." }
+    }
+
+    function Get-InitializationValue([string]$PropertyName, [string]$ProvidedValue) {
+        if ($null -ne $previous -and $null -ne $previous.PSObject.Properties[$PropertyName]) { return [string]$previous.$PropertyName }
+        if ($UseProvidedPasswords) { return $ProvidedValue }
+        if ($null -ne $template -and $null -ne $template.PSObject.Properties[$PropertyName]) { return [string]$template.$PropertyName }
+        return ''
+    }
+
+    $entry = [ordered]@{
+        name=$canonicalName;baseUrl=$BaseUrl.AbsoluteUri.TrimEnd('/');realm=$Realm;adminAccount=$AdminAccount
+        adminPassword=Get-InitializationValue 'adminPassword' $AdminPassword
+        newAccountPassword=Get-InitializationValue 'newAccountPassword' $NewAccountPassword
+        token=if($null-ne$previous-and$null-ne$previous.PSObject.Properties['token']){[string]$previous.token}else{''}
+        pucId=if($null-ne$previous-and$null-ne$previous.PSObject.Properties['pucId']){[string]$previous.pucId}else{''}
+        allowInsecureTls=if($null-ne$template){$true}else{$AllowInsecureTls}
+    }
+    Write-PucJson -Path $configPath -Value (Set-PucEntry -Document $existing -Name $canonicalName -Entry $entry)
+    New-Item -ItemType Directory -Force -Path (Join-Path $ConfigRoot 'reports') | Out-Null
+    [pscustomobject]@{
+        status='initialized';environment=$canonicalName;templateEnvironment=if($null-ne$template){$TemplateEnvironment}else{''}
+        configPath=$configPath;adminPasswordConfigured=(-not[string]::IsNullOrEmpty([string]$entry.adminPassword))
+        accountPasswordConfigured=(-not[string]::IsNullOrEmpty([string]$entry.newAccountPassword))
+    }
 }
 
 function Set-PucEntry {
@@ -420,4 +534,4 @@ function Get-PucPropertyPath {
     return $current
 }
 
-Export-ModuleMember -Function Get-PucDefaultConfigRoot,Get-PucSettingsPath,Get-PucConfigRoot,Read-PucJson,Write-PucJson,Get-PucEnvironment,Test-PucConfigWriteAccess,Get-PucEntry,Set-PucEntry,Protect-PucString,Unprotect-PucString,ConvertTo-PucJsonBytes,ConvertFrom-PucResponseEncoding,ConvertTo-PucDisplayValue,Format-PucApiResponsePreview,New-PucApiFailureMessage,Test-PucSavedTokenRejected,ConvertTo-PucDesHex,Get-PucRuntimeEntry,Set-PucRuntimeEntry,Get-PucPropertyPath,Resolve-PucNodeExecutable,Invoke-PucHttpRequest,Invoke-PucJsonRequest,Invoke-PucJsonHttpRequest,ConvertFrom-PucJsonHttpResponse,New-PucMultipartFormData,Write-PucBytesAtomically
+Export-ModuleMember -Function Get-PucDefaultConfigRoot,Get-PucSettingsPath,Get-PucConfigRoot,Read-PucJson,Write-PucJson,Get-PucEnvironment,Test-PucConfigWriteAccess,Get-PucEntry,Set-PucEntry,Get-PucEnvironmentNameFromBaseUrl,Repair-PucEnvironmentNames,Initialize-PucEnvironmentConfig,Protect-PucString,Unprotect-PucString,ConvertTo-PucJsonBytes,ConvertFrom-PucResponseEncoding,ConvertTo-PucDisplayValue,Format-PucApiResponsePreview,New-PucApiFailureMessage,Test-PucSavedTokenRejected,ConvertTo-PucDesHex,Get-PucRuntimeEntry,Set-PucRuntimeEntry,Get-PucPropertyPath,Resolve-PucNodeExecutable,Invoke-PucHttpRequest,Invoke-PucJsonRequest,Invoke-PucJsonHttpRequest,ConvertFrom-PucJsonHttpResponse,New-PucMultipartFormData,Write-PucBytesAtomically

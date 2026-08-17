@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('Module','Transport','AccountsFile','SinglePasswordReset','LiveFlow','AccountCreation','AccountCompletion','All')][string]$Case = 'All',
+    [ValidateSet('Module','Transport','LoginContext','AuthLifecycle','AccountsFile','SinglePasswordReset','LiveFlow','AccountCreation','AccountCompletion','All')][string]$Case = 'All',
     [int]$ExternalServerPort
 )
 
@@ -85,6 +85,72 @@ function Test-Transport {
         Assert-Equal @(Get-ChildItem -LiteralPath (Split-Path -Parent $outputPath) -Filter '*.tmp.*').Count 0 'Binary temporary files remain'
     } finally { Stop-FakeServer $server;Remove-Item -LiteralPath $dir -Recurse -Force }
 }
+function Test-LoginContext {
+    $dir=New-TempDirectory;$port=if($ExternalServerPort){$ExternalServerPort}else{Get-FreePort};$server=if($ExternalServerPort){$null}else{Start-FakeServer $port};$process=$null
+    try {
+        $config=[ordered]@{version=1;environments=@([ordered]@{name='fake';baseUrl="http://127.0.0.1:$port";realm='puc.com';adminAccount='admin';adminPassword='admin-secret';newAccountPassword='new-secret';token='';pucId='';allowInsecureTls=$false})}
+        $config|ConvertTo-Json -Depth 10|Set-Content -LiteralPath (Join-Path $dir 'config.json') -Encoding UTF8
+        $sessionId=[guid]::NewGuid().ToString('N')
+        $sessionDirectory=Join-Path (Join-Path $dir 'login-runtime') $sessionId
+        New-Item -ItemType Directory -Path $sessionDirectory -Force|Out-Null
+        $worker=Join-Path $skillRoot 'scripts\PucLoginWorker.ps1'
+        $arguments=@('-NoProfile','-ExecutionPolicy','Bypass','-File',$worker,'-Environment','fake','-SessionId',$sessionId,'-ConfigRoot',$dir,'-InputTimeoutSeconds','20')
+        $process=Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WindowStyle Hidden -PassThru
+        $readyPath=Join-Path $sessionDirectory 'ready.json'
+        $resultPath=Join-Path $sessionDirectory 'result.json'
+        for($index=0;$index-lt 100 -and -not (Test-Path -LiteralPath $readyPath);$index++){
+            if($process.HasExited){throw "Login worker exited before captcha readiness with code $($process.ExitCode)."}
+            Start-Sleep -Milliseconds 100
+            $process.Refresh()
+        }
+        Assert-True (Test-Path -LiteralPath $readyPath) 'Login worker did not become ready'
+        Import-Module $modulePath -Force
+        Write-PucJson -Path (Join-Path $sessionDirectory 'input.json') -Value ([ordered]@{captchaValue=Protect-PucString '1234'})
+        for($index=0;$index-lt 100 -and -not (Test-Path -LiteralPath $resultPath);$index++){Start-Sleep -Milliseconds 100}
+        Assert-True (Test-Path -LiteralPath $resultPath) 'Login worker did not return a result'
+        $result=Read-PucJson -Path $resultPath -Default $null
+        Assert-Equal $result.status 'login_succeeded' 'Login worker status'
+        $updated=Get-PucEnvironment -ConfigRoot $dir -Name 'fake'
+        Assert-Equal $updated.token 'test-token' 'Saved login token'
+        Assert-Equal $updated.pucId '00018' 'Saved authenticated effective PUC ID'
+        $writesResponse=Invoke-PucHttpRequest -Method GET -Uri ([uri]"http://127.0.0.1:$port/writes")
+        $observed=[Text.Encoding]::UTF8.GetString($writesResponse.BodyBytes)|ConvertFrom-Json
+        Assert-Equal @($observed.loginPucIds).Count 1 'Login request count'
+        Assert-Equal $observed.loginPucIds[0] '03093' 'Login bootstrap PUC ID'
+        Assert-Equal $observed.authenticatedCommonQueries 1 'Authenticated common configuration query count'
+    } finally {
+        if($null-ne$process){try{if(-not$process.HasExited){Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue}}finally{$process.Dispose()}}
+        Stop-FakeServer $server;Remove-Item -LiteralPath $dir -Recurse -Force
+    }
+}
+function Test-AuthLifecycle {
+    $dir=New-TempDirectory;$port=if($ExternalServerPort){$ExternalServerPort}else{Get-FreePort};$server=if($ExternalServerPort){$null}else{Start-FakeServer $port}
+    try {
+        New-TestConfig $dir $port
+        Import-Module $modulePath -Force
+        $configPath=Join-Path $dir 'config.json'
+        $document=Read-PucJson -Path $configPath -Default $null
+        $document.environments[0].token='rejected-token'
+        $document.environments[0].pucId='stale-puc-id'
+        Write-PucJson -Path $configPath -Value $document
+        $command=Join-Path $skillRoot 'scripts\Invoke-PucAuth.ps1'
+        $rejected=& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $command -Action Validate -Environment fake -ConfigRoot $dir|ConvertFrom-Json
+        Assert-Equal $rejected.reason 'rejected' 'Rejected token reason'
+        $updated=Get-PucEnvironment -ConfigRoot $dir -Name 'fake'
+        Assert-Equal $updated.token '' 'Rejected token was not cleared'
+        Assert-Equal $updated.pucId '' 'PUC ID was not cleared with rejected token'
+
+        $document=Read-PucJson -Path $configPath -Default $null
+        $document.environments[0].token=''
+        $document.environments[0].pucId='stale-puc-id'
+        Write-PucJson -Path $configPath -Value $document
+        $missing=& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $command -Action Validate -Environment fake -ConfigRoot $dir|ConvertFrom-Json
+        Assert-Equal $missing.reason 'missing' 'Missing token reason'
+        $normalized=Get-PucEnvironment -ConfigRoot $dir -Name 'fake'
+        Assert-Equal $normalized.token '' 'Missing token changed unexpectedly'
+        Assert-Equal $normalized.pucId '' 'Stale PUC ID was not cleared with missing token'
+    } finally { Stop-FakeServer $server;Remove-Item -LiteralPath $dir -Recurse -Force }
+}
 function Test-AccountsFile {
     $dir=New-TempDirectory
     try {
@@ -139,7 +205,7 @@ function Test-AccountCreation {
     try {
         New-TestConfig $dir $port
         $command=Join-Path $skillRoot 'scripts\Invoke-PucAccounts.ps1'
-        $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $command -Environment fake -Prefix new -StartSequence 1 -Live -ConfirmLive -ConfigRoot $dir)
+        $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $command -Environment fake -Prefix new -Live -ConfirmLive -ConfigRoot $dir)
         $jsonLine=@($output|Where-Object { ([string]$_).TrimStart().StartsWith('{') })|Select-Object -Last 1
         Assert-True (-not [string]::IsNullOrWhiteSpace([string]$jsonLine)) 'Account creation policy output is missing'
         $policyResult=$jsonLine|ConvertFrom-Json
@@ -149,7 +215,9 @@ function Test-AccountCreation {
         Import-Module $modulePath -Force
         $writesResponse=Invoke-PucHttpRequest -Method GET -Uri ([uri]"http://127.0.0.1:$port/writes")
         $writes=[Text.Encoding]::UTF8.GetString($writesResponse.BodyBytes)|ConvertFrom-Json
-        Assert-Equal @($writes.writes|Where-Object operation -eq 'add_account').Count 1 'Created account count'
+        $createdAccounts=@($writes.writes|Where-Object operation -eq 'add_account')
+        Assert-Equal $createdAccounts.Count 1 'Created account count'
+        Assert-Equal $createdAccounts[0].account 'new1005' 'Created account should increment the highest existing sequence without filling gaps'
         Assert-Equal $writes.policyQueries 1 'Account creation policy query count'
     } finally { Stop-FakeServer $server;Remove-Item -LiteralPath $dir -Recurse -Force }
 }
@@ -179,6 +247,6 @@ function Test-AccountCompletion {
 }
 
 try {
-    $cases=if($Case-eq'All'){@('Module','Transport','AccountsFile','SinglePasswordReset','LiveFlow','AccountCreation','AccountCompletion')}else{@($Case)}
+    $cases=if($Case-eq'All'){@('Module','Transport','LoginContext','AuthLifecycle','AccountsFile','SinglePasswordReset','LiveFlow','AccountCreation','AccountCompletion')}else{@($Case)}
     foreach($name in $cases){& "Test-$name";Write-Output "PASS $name"}
 } finally { $env:PUC_NODE_EXE=$oldNode }

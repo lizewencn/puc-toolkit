@@ -3,7 +3,7 @@
 const http = require('http');
 const port = Number(process.argv[2]);
 const expectedToken = 'test-token';
-const accounts = new Map(['mhw19001', 'mhw19002', 'other'].map((name, index) => [name, {
+const accounts = new Map(['mhw19001', 'mhw19002', 'other', 'new1001', 'new1002', 'new1004'].map((name, index) => [name, {
   dispatcher_account: name,
   dispatcher_name: `User ${index + 1}`,
   dispatcher_no: String(1000 + index),
@@ -26,6 +26,9 @@ const accounts = new Map(['mhw19001', 'mhw19002', 'other'].map((name, index) => 
 }]));
 const writes = [];
 let policyQueries = 0;
+let loginComplete = false;
+let authenticatedCommonQueries = 0;
+const loginPucIds = [];
 
 function send(response, value, headers = {}) {
   const body = Buffer.from(JSON.stringify(value));
@@ -51,11 +54,29 @@ const server = http.createServer((request, response) => {
         hasFile: raw.includes(Buffer.from('name="upload"; filename="sample.bin"')) && raw.includes(Buffer.from([0, 1, 2, 253, 254, 255])),
       });
     }
-    if (request.url === '/writes') return send(response, { writes, policyQueries });
+    if (request.url === '/writes') return send(response, { writes, policyQueries, authenticatedCommonQueries, loginPucIds });
     if (request.url !== '/confs') return send(response, { result: 404, msg: 'not found' });
     let body;
     try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
     catch { return send(response, { result: 400, msg: 'bad json' }); }
+    const hasLoginSession = String(request.headers.cookie || '').includes('login-session=abc');
+    if (body.cmd_name === 'common_cfg_request') {
+      if (request.headers.token === expectedToken && loginComplete && hasLoginSession) {
+        authenticatedCommonQueries += 1;
+        return send(response, { result: 0, common_info: { puc_id: '00018' } });
+      }
+      return send(response, { result: 0, common_info: { puc_id: '03093' } }, { 'set-cookie': ['login-session=abc; Path=/'] });
+    }
+    if (body.cmd_name === 'puc_get_captcha') {
+      if (!hasLoginSession) return send(response, { result: 400, msg: 'missing login session' });
+      return send(response, { result: 0, uuid: 'captcha-id', captcha: Buffer.from('fake-image').toString('base64') });
+    }
+    if (body.cmd_name === 'login_puc_account') {
+      loginPucIds.push(String(body.puc_id || ''));
+      if (!hasLoginSession) return send(response, { result: 400, msg: 'missing login session' });
+      loginComplete = true;
+      return send(response, { result: 0, token: expectedToken });
+    }
     if (request.headers.token !== expectedToken) return send(response, { result: 51800032, msg: 'verify-token failed' });
     if (body.cmd_name === 'conf_query_dc_pwd_config_request') {
       policyQueries += 1;

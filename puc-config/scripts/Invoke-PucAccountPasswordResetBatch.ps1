@@ -18,7 +18,7 @@ if (@($PlanOnly,$DryRun,$Live | Where-Object { $_ }).Count -ne 1) { throw 'Selec
 if (($PlanOnly -or $DryRun) -and ([string]::IsNullOrWhiteSpace($Query) -eq [string]::IsNullOrWhiteSpace($AccountsPath))) { throw 'PlanOnly and DryRun require exactly one target source: Query or AccountsPath.' }
 if (($DryRun -or $Live) -and [string]::IsNullOrWhiteSpace($ManifestPath)) { throw 'DryRun and Live require ManifestPath.' }
 if ($Live -and -not $ConfirmLive) { throw 'Live batch reset requires ConfirmLive after explicit confirmation.' }
-if ($Environment -notmatch '^[A-Za-z0-9_-]+$') { throw 'Environment contains unsupported characters.' }
+if ($Environment -notmatch '^[A-Za-z0-9_.-]+$') { throw 'Environment contains unsupported characters.' }
 
 Import-Module (Join-Path $PSScriptRoot 'PucConfig.psm1') -Force
 $root = Get-PucConfigRoot $ConfigRoot

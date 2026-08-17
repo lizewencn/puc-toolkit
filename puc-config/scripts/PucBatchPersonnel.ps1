@@ -35,12 +35,33 @@ function New-PersonValues([int]$sequence) {
 }
 
 function Write-Results($items) {
+    $rows = @($items)
     $reportDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($config.reportDirectory)
     New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $items | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $reportDir "puc-personnel-$stamp.json") -Encoding UTF8
-    $items | Export-Csv -NoTypeInformation -Encoding UTF8 -LiteralPath (Join-Path $reportDir "puc-personnel-$stamp.csv")
-    $items | Format-Table -AutoSize
+    $rows | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $reportDir "puc-personnel-$stamp.json") -Encoding UTF8
+    $rows | Export-Csv -NoTypeInformation -Encoding UTF8 -LiteralPath (Join-Path $reportDir "puc-personnel-$stamp.csv")
+
+    $failedCount = @($rows | Where-Object status -eq 'failed').Count
+    $createdCount = @($rows | Where-Object status -eq 'created').Count
+    $overallStatus = if ($failedCount -gt 0) {
+        'partial-failure'
+    } elseif ($PlanOnly) {
+        'planned-offline'
+    } elseif ($DryRun) {
+        'previewed'
+    } else {
+        'created'
+    }
+
+    [pscustomobject]@{
+        status = $overallStatus
+        action = 'CreateAddressBookPersonnel'
+        count = $rows.Count
+        succeeded = $createdCount
+        failed = $failedCount
+        results = $rows
+    } | ConvertTo-Json -Depth 20 -Compress
 }
 
 if ($PlanOnly) {

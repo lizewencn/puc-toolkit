@@ -34,6 +34,10 @@ function Set-EnvironmentAuth([string]$Token,[string]$PucId) {
     Write-PucJson -Path $configPath -Value (Set-PucEntry -Document $document -Name $Environment -Entry $entry)
 }
 
+function Clear-EnvironmentAuth {
+    Set-EnvironmentAuth -Token '' -PucId ''
+}
+
 function Get-SessionPaths([string]$SessionId) {
     if ($SessionId -notmatch '^[a-f0-9]{32}$') { throw 'Pending login session ID is invalid.' }
     $directory = Join-Path (Join-Path $root 'login-runtime') $SessionId
@@ -90,6 +94,9 @@ try {
 
     if ($Action -eq 'Validate') {
         if ([string]::IsNullOrWhiteSpace([string]$environmentConfig.token)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$environmentConfig.pucId)) {
+                Clear-EnvironmentAuth
+            }
             [pscustomobject]@{status='token_checked';environment=$Environment;valid=$false;reason='missing'} | ConvertTo-Json -Compress
             return
         }
@@ -102,7 +109,7 @@ try {
             if ($_.Exception.Data.Contains('PucHttpStatusCode')) { $statusCode = [int]$_.Exception.Data['PucHttpStatusCode'] }
             elseif ($_.Exception.Response) { try{$statusCode=[int]$_.Exception.Response.StatusCode}catch{$statusCode=$null} }
             if ($statusCode -notin @(401,403)) { throw }
-            Set-EnvironmentAuth -Token '' -PucId ([string]$environmentConfig.pucId)
+            Clear-EnvironmentAuth
             [pscustomobject]@{
                 status='token_checked';environment=$Environment;valid=$false;reason='rejected';httpStatus=$statusCode
                 responsePreview=$(if ($_.Exception.Data.Contains('PucHttpResponsePreview')) { [string]$_.Exception.Data['PucHttpResponsePreview'] } else { '' })
@@ -118,7 +125,7 @@ try {
         if (-not (Test-PucSavedTokenRejected -Response $response)) {
             throw (New-PucApiFailureMessage -Operation 'Saved-token validation' -Response $response)
         }
-        Set-EnvironmentAuth -Token '' -PucId ([string]$environmentConfig.pucId)
+        Clear-EnvironmentAuth
         [pscustomobject]@{
             status='token_checked';environment=$Environment;valid=$false;reason='rejected'
             result=[string]$response.result;msg=[string]$response.msg
@@ -148,7 +155,7 @@ try {
         $workerPath = Join-Path $PSScriptRoot 'PucLoginWorker.ps1'
         $interactiveArgument = if ($Action -eq 'InteractiveLogin') { ' -Interactive' } else { '' }
         $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$workerPath`" -Environment `"$Environment`" -SessionId $sessionId -ConfigRoot `"$root`" -InputTimeoutSeconds 55$interactiveArgument"
-        $windowStyle = if ($Action -eq 'InteractiveLogin') { 'Normal' } else { 'Hidden' }
+        $windowStyle = 'Hidden'
         $process = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WindowStyle $windowStyle -PassThru
         $deadline = [DateTimeOffset]::UtcNow.AddSeconds(30)
         while (-not (Test-Path -LiteralPath $paths.Ready)) {

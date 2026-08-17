@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'PucConfig.psm1') -Force
 $config = Get-Content -Raw -LiteralPath $ConfigPath | ConvertFrom-Json
 
-foreach ($name in @('startSequence','count','accountPrefix')) {
+foreach ($name in @('count','accountPrefix')) {
     if ($null -eq $config.$name -or [string]::IsNullOrWhiteSpace([string]$config.$name)) {
         throw "Required configuration value is missing: $name"
     }
@@ -19,12 +19,30 @@ if ([string]$config.ipSuffix -notmatch '^\d{1,3}$' -or [int]$config.ipSuffix -lt
     throw 'ipSuffix must be the final decimal octet of the target environment IPv4 address.'
 }
 $effectiveAccountPrefix = "$($config.accountPrefix)$([int]$config.ipSuffix)"
-if ([int]$config.startSequence -lt 0 -or [int]$config.startSequence -gt 999) { throw 'startSequence must be between 0 and 999.' }
 if ([int]$config.count -lt 1 -or [int]$config.count -gt 1000) { throw 'count must be between 1 and 1000.' }
-if ([int]$config.startSequence + [int]$config.count -gt 1000) { throw 'The requested sequence range exceeds 999.' }
 
 function Write-Results($items) {
-    $items | Format-Table -AutoSize
+    $rows = @($items)
+    $failedCount = @($rows | Where-Object status -eq 'failed').Count
+    $createdCount = @($rows | Where-Object status -eq 'created').Count
+    $overallStatus = if ($failedCount -gt 0) {
+        'partial-failure'
+    } elseif ($PlanOnly) {
+        'planned-offline'
+    } elseif ($DryRun) {
+        'previewed'
+    } else {
+        'created'
+    }
+
+    [pscustomobject]@{
+        status = $overallStatus
+        action = 'CreateDispatcherAccounts'
+        count = $rows.Count
+        succeeded = $createdCount
+        failed = $failedCount
+        results = $rows
+    } | ConvertTo-Json -Depth 20 -Compress
 }
 
 $script:lastDispatchTimestamp = [int64]0
@@ -42,19 +60,12 @@ function New-DispatchNumber {
 }
 
 if ($PlanOnly) {
-    $planned = for ($offset = 0; $offset -lt [int]$config.count; $offset++) {
-        $sequence = [int]$config.startSequence + $offset
-        $suffix = $sequence.ToString('000')
-        [pscustomobject]@{
-            sequence = $sequence
-            account = "$effectiveAccountPrefix$suffix"
-            alias = "$effectiveAccountPrefix$($suffix)_alias"
-            dispatchNumber = New-DispatchNumber
-            status = 'planned-offline'
-            reason = 'duplicates-not-checked'
-        }
-    }
-    Write-Results @($planned)
+    Write-Results @([pscustomobject]@{
+        accountPrefix = $effectiveAccountPrefix
+        count = [int]$config.count
+        status = 'planned-offline'
+        reason = 'sequence-requires-account-lookup'
+    })
     return
 }
 
@@ -355,7 +366,19 @@ if ($adapter.protocol -eq 'puc-command') {
 
 $results = [System.Collections.Generic.List[object]]::new()
 $prepared = [System.Collections.Generic.List[object]]::new()
-$sequence = [int]$config.startSequence
+$sequencePattern = '^' + [regex]::Escape($effectiveAccountPrefix) + '(?<sequence>\d{3})$'
+$highestSequence = 0
+foreach ($existingAccount in $existingAccounts) {
+    $match = [regex]::Match($existingAccount, $sequencePattern, [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if ($match.Success) {
+        $existingSequence = [int]$match.Groups['sequence'].Value
+        if ($existingSequence -gt $highestSequence) { $highestSequence = $existingSequence }
+    }
+}
+$sequence = $highestSequence + 1
+if ($sequence -gt 999 -or $sequence + [int]$config.count - 1 -gt 999) {
+    throw 'The next generated account sequence range exceeds 999.'
+}
 $scanned = 0
 $maxScanCount = if ($config.maxScanCount) { [int]$config.maxScanCount } else { [Math]::Max([int]$config.count * 10, 100) }
 while ($prepared.Count -lt [int]$config.count) {

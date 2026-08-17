@@ -24,6 +24,8 @@ FTP input is explicitly out of scope for the first version. Do not display a dis
 
 Add `制作 Android 升级包` to the desktop application's operation catalog.
 
+Package creation does not require a selected PUC environment. Keep the normal environment selector available because a completed package may subsequently be uploaded, but do not block inspection, preview, or local generation when no environment is configured.
+
 The operation collects:
 
 - A local `.apk` file selected with a file picker.
@@ -43,6 +45,8 @@ After APK selection, inspect it automatically and display:
 Disable package generation until the APK has been inspected successfully and all required inputs are complete. Before generation, show a confirmation preview containing the selected APK, parsed version information, description, force choice, and destination.
 
 Run generation through the launcher's existing hidden child-workflow mechanism. Show progress, structured success or failure output, and the final package path in the existing result area. Do not expose command windows.
+
+Add a separate `上传` button. Keep it disabled until the current launcher session has successfully created and validated a package. Clicking it must first require a currently selected, configured PUC environment. If no valid environment is available, stop locally with a Chinese instruction to add or select an environment. The PUC upload request itself is outside the first implementation phase until its API contract is supplied; during this phase, a valid-environment click reports explicitly that the upload interface is not configured and must never claim that an upload occurred.
 
 ## APK inspection
 
@@ -131,3 +135,5 @@ Run the existing launcher self-tests and UI self-tests in addition to the new mo
 ## Acceptance criteria
 
 The feature is complete when a user can open PUC Toolkit from the desktop, select `制作 Android 升级包`, choose a valid local APK, review automatically parsed version information, enter a description, select the force option and output directory, confirm the preview, and receive a validated `升级包_<versionName>_<versionCode>.zip` without requiring Python or an installed Android SDK.
+
+The first implementation phase also completes the upload-button state machine and environment precondition. Actual server transfer remains blocked until the PUC upload API request and response contract is provided.

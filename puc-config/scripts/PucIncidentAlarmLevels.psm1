@@ -13,9 +13,9 @@ function Get-PucIncidentAlarmLevelDefinitions {
     $instruction = ConvertFrom-PucIncidentCodePoints 0x6307,0x4ee4
     $suffix = ConvertFrom-PucIncidentCodePoints 0x8b66,0x60c5,0x7b49,0x7ea7,0x8bf4,0x660e
     return @(
-        [pscustomobject]@{Code='00';Name=$star;Description=$star+$suffix;Color='#E56659';Tone='CriticalAlarm.wav'},
-        [pscustomobject]@{Code='01';Name=$yellow;Description=$yellow+$suffix;Color='#eba54d';Tone='MediumAlarm.wav'},
-        [pscustomobject]@{Code='02';Name=$normal;Description=$normal+$suffix;Color='#73cb6d';Tone='MediumAlarm.wav'},
+        [pscustomobject]@{Code='00';Name=$normal;Description=$normal+$suffix;Color='#73cb6d';Tone='MediumAlarm.wav'},
+        [pscustomobject]@{Code='01';Name=$star;Description=$star+$suffix;Color='#E56659';Tone='CriticalAlarm.wav'},
+        [pscustomobject]@{Code='02';Name=$yellow;Description=$yellow+$suffix;Color='#eba54d';Tone='MediumAlarm.wav'},
         [pscustomobject]@{Code='03';Name=$warning;Description=$warning+$suffix;Color='#73cb6d';Tone='CommonlyAlarm.wav'},
         [pscustomobject]@{Code='04';Name=$instruction;Description=$instruction+$suffix;Color='#73cb6d';Tone='CommonlyAlarm.wav'}
     )
@@ -26,11 +26,8 @@ function Resolve-PucIncidentAlarmLevelAssets {
     if (-not [IO.Path]::IsPathRooted($AssetDirectory)) { throw 'AssetDirectory must be an absolute path.' }
     $resolvedDirectory = [IO.Path]::GetFullPath($AssetDirectory)
     if (-not (Test-Path -LiteralPath $resolvedDirectory -PathType Container)) { throw "Incident asset directory does not exist: $resolvedDirectory" }
-    $normal = ConvertFrom-PucIncidentCodePoints 0x666e,0x901a
-    $fallback = Join-Path $resolvedDirectory ($normal + '.zip')
     foreach ($item in @(Get-PucIncidentAlarmLevelDefinitions)) {
-        $preferred = Join-Path $resolvedDirectory ($item.Name + '.zip')
-        $selected = if (Test-Path -LiteralPath $preferred -PathType Leaf) { $preferred } else { $fallback }
+        $selected = Join-Path $resolvedDirectory ($item.Name + '.zip')
         if (-not (Test-Path -LiteralPath $selected -PathType Leaf)) { throw "Incident ZIP does not exist for level '$($item.Code)'." }
         [pscustomobject]@{
             Code=$item.Code;Name=$item.Name;Description=$item.Description;Color=$item.Color;Tone=$item.Tone

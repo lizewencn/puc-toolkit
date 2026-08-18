@@ -28,9 +28,9 @@ function Test-Definitions {
     $instruction=ConvertFrom-CodePoints 0x6307,0x4ee4
     $descriptionSuffix=ConvertFrom-CodePoints 0x8b66,0x60c5,0x7b49,0x7ea7,0x8bf4,0x660e
     $expected = @(
-        @('00',$star,'#E56659','CriticalAlarm.wav'),
-        @('01',$yellow,'#eba54d','MediumAlarm.wav'),
-        @('02',$normal,'#73cb6d','MediumAlarm.wav'),
+        @('00',$normal,'#73cb6d','MediumAlarm.wav'),
+        @('01',$star,'#E56659','CriticalAlarm.wav'),
+        @('02',$yellow,'#eba54d','MediumAlarm.wav'),
         @('03',$warning,'#73cb6d','CommonlyAlarm.wav'),
         @('04',$instruction,'#73cb6d','CommonlyAlarm.wav')
     )
@@ -43,11 +43,20 @@ function Test-Definitions {
         Assert-Equal $items[$i].Description ($items[$i].Name + $descriptionSuffix) "Description $i"
     }
     $resolved = @(Resolve-PucIncidentAlarmLevelAssets -AssetDirectory (Join-Path $skillRoot 'assets\incident'))
-    Assert-Equal $resolved[0].ZipFileName ($star + '.zip') 'Star ZIP'
-    Assert-Equal $resolved[1].ZipFileName ($yellow + '.zip') 'Yellow ZIP'
-    Assert-Equal $resolved[2].ZipFileName ($normal + '.zip') 'Normal ZIP'
-    Assert-Equal $resolved[3].ZipFileName ($normal + '.zip') 'Warning fallback ZIP'
-    Assert-Equal $resolved[4].ZipFileName ($normal + '.zip') 'Instruction fallback ZIP'
+    Assert-Equal $resolved[0].ZipFileName ($normal + '.zip') 'Normal ZIP'
+    Assert-Equal $resolved[1].ZipFileName ($star + '.zip') 'Star ZIP'
+    Assert-Equal $resolved[2].ZipFileName ($yellow + '.zip') 'Yellow ZIP'
+    Assert-Equal $resolved[3].ZipFileName ($warning + '.zip') 'Warning ZIP'
+    Assert-Equal $resolved[4].ZipFileName ($instruction + '.zip') 'Instruction ZIP'
+
+    $strictDirectory=Join-Path ([IO.Path]::GetTempPath()) ('puc-incident-strict-assets-'+[guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $strictDirectory|Out-Null
+    try {
+        foreach($name in @($normal,$star,$yellow,$instruction)){
+            New-TestZip (Join-Path $strictDirectory ($name+'.zip')) @{'icon.svg'='<svg></svg>'}
+        }
+        Assert-Throws { $null=@(Resolve-PucIncidentAlarmLevelAssets -AssetDirectory $strictDirectory) } "Incident ZIP does not exist for level '03'"
+    } finally { Remove-Item -LiteralPath $strictDirectory -Recurse -Force }
 }
 
 function New-TestZip([string]$Path, [hashtable]$Entries) {
@@ -73,7 +82,9 @@ function Initialize-TestIncidentAssets {
     foreach($name in @(
         (ConvertFrom-CodePoints 0x661f,0x6807),
         (ConvertFrom-CodePoints 0x9ec4,0x6807),
-        (ConvertFrom-CodePoints 0x666e,0x901a)
+        (ConvertFrom-CodePoints 0x666e,0x901a),
+        (ConvertFrom-CodePoints 0x9884,0x8b66),
+        (ConvertFrom-CodePoints 0x6307,0x4ee4)
     )){New-TestZip (Join-Path $directory ($name+'.zip')) @{'icon.svg'='<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>'}}
     return $true
 }

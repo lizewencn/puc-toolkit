@@ -12,7 +12,7 @@ Use `scripts/Invoke-PucIncidentAlarmLevels.ps1` to configure the fixed five poli
 
 Show the environment, all five codes and names, classification, color, ZIP leaf name and SHA-256, tone, planned write count, and `PreviewHash`. Treat the user's explicit instruction to configure the fixed five levels in that exact environment as confirmation. After a successful preview, continue to live mode without asking again.
 
-The script uses a same-name ZIP from `assets/incident` when present and falls back to `普通.zip`. It validates ZIP structure without extracting files and requires exact built-in tone matches.
+The script requires the same-name ZIP for every level in `assets/incident`: `普通.zip`, `星标.zip`, `黄标.zip`, `预警.zip`, and `指令.zip`. It never substitutes another level's package. It validates ZIP structure without extracting files and requires exact built-in tone matches.
 
 An item conflicts when an existing record has the same level code or the same level name. This includes an exact code-and-name match, regardless of its other values. Report it as `conflict-skipped`, never overwrite it, and continue creating later missing items.
 

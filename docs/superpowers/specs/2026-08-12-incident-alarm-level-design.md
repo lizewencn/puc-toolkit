@@ -6,15 +6,15 @@ Extend `puc-config` so a request to configure incident alarm levels prepares and
 
 ## Fixed Configuration
 
-| Code | Name | Color | Preferred ZIP | Fallback ZIP | Tone |
-|---|---|---|---|---|---|
-| `00` | `星标` | `#E56659` | `星标.zip` | `普通.zip` | `CriticalAlarm.wav` |
-| `01` | `黄标` | `#eba54d` | `黄标.zip` | `普通.zip` | `MediumAlarm.wav` |
-| `02` | `普通` | `#73cb6d` | `普通.zip` | `普通.zip` | `MediumAlarm.wav` |
-| `03` | `预警` | `#73cb6d` | `预警.zip` | `普通.zip` | `CommonlyAlarm.wav` |
-| `04` | `指令` | `#73cb6d` | `指令.zip` | `普通.zip` | `CommonlyAlarm.wav` |
+| Code | Name | Color | ZIP | Tone |
+|---|---|---|---|---|
+| `00` | `普通` | `#73cb6d` | `普通.zip` | `MediumAlarm.wav` |
+| `01` | `星标` | `#E56659` | `星标.zip` | `CriticalAlarm.wav` |
+| `02` | `黄标` | `#eba54d` | `黄标.zip` | `MediumAlarm.wav` |
+| `03` | `预警` | `#73cb6d` | `预警.zip` | `CommonlyAlarm.wav` |
+| `04` | `指令` | `#73cb6d` | `指令.zip` | `CommonlyAlarm.wav` |
 
-Generate each description as `<name>警情等级说明`. Resolve ZIP files relative to `puc-config/assets/incident`. Use the preferred same-name ZIP when it exists; otherwise use `普通.zip`. Refuse to proceed if the selected file does not exist, is empty, is not a valid ZIP, or contains an unsafe path.
+Generate each description as `<name>警情等级说明`. Resolve ZIP files relative to `puc-config/assets/incident`. Every level must use its same-name ZIP; all five ZIP files are required and no fallback is allowed. Refuse to proceed if a required file does not exist, is empty, is not a valid ZIP, or contains an unsafe path.
 
 ## Verified API Contract
 

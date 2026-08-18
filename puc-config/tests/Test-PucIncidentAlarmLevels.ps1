@@ -161,9 +161,10 @@ function Test-SkillRouting {
 
 function Test-LiveFlow {
     $port=19000+(Get-Random -Minimum 1 -Maximum 500)
+    $environmentName='127.0.0.1'
     $configRoot=Join-Path ([IO.Path]::GetTempPath()) ('puc-incident-config-'+[guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $configRoot|Out-Null
-    $config=[ordered]@{version=1;environments=@([ordered]@{name='fake';baseUrl="http://127.0.0.1:$port";realm='puc.com';adminAccount='admin';adminPassword='';newAccountPassword='';token='test-token';pucId='00001';allowInsecureTls=$false})}
+    $config=[ordered]@{version=1;environments=@([ordered]@{name=$environmentName;baseUrl="http://127.0.0.1:$port";realm='puc.com';adminAccount='admin';adminPassword='';newAccountPassword='';token='test-token';pucId='00001';allowInsecureTls=$false})}
     $config|ConvertTo-Json -Depth 10|Set-Content -LiteralPath (Join-Path $configRoot 'config.json') -Encoding UTF8
     $server=Start-Process -FilePath $python -ArgumentList @((Join-Path $PSScriptRoot 'incident_fake_server.py'),'--port',$port) -WindowStyle Hidden -PassThru
     try {
@@ -173,11 +174,11 @@ function Test-LiveFlow {
         $commandPath=Join-Path $skillRoot 'scripts\Invoke-PucIncidentAlarmLevels.ps1'
         $old=[Environment]::GetEnvironmentVariable('PUC_CONFIG_TEST_MODE');[Environment]::SetEnvironmentVariable('PUC_CONFIG_TEST_MODE','1')
         try {
-            $previewText=& $commandPath -Environment fake -DryRun -ConfigRoot $configRoot -EndpointOverride "http://127.0.0.1:$port/confs"
+            $previewText=& $commandPath -Environment $environmentName -DryRun -ConfigRoot $configRoot -EndpointOverride "http://127.0.0.1:$port/confs"
             $preview=$previewText|ConvertFrom-Json
             Assert-Equal $preview.PlannedWrites 4 'Fake preview writes'
             Assert-Equal $preview.Items[0].Classification 'conflict' 'Preflight code conflict'
-            $liveText=& $commandPath -Environment fake -Live -ConfirmLive -ExpectedPreviewHash $preview.PreviewHash -ConfigRoot $configRoot -EndpointOverride "http://127.0.0.1:$port/confs"
+            $liveText=& $commandPath -Environment $environmentName -Live -ConfirmLive -ExpectedPreviewHash $preview.PreviewHash -ConfigRoot $configRoot -EndpointOverride "http://127.0.0.1:$port/confs"
             $live=$liveText|ConvertFrom-Json
             Assert-Equal $live.status 'configured' 'Live status'
             Assert-Equal $live.writesUsed 3 'Live write count'

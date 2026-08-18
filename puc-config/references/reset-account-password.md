@@ -2,6 +2,8 @@
 
 Use `scripts/Invoke-PucAccountPasswordReset.ps1` for every request to reset, change, modify, or update one dispatcher account password. For more than one account, use `scripts/Invoke-PucAccountPasswordResetBatch.ps1`; do not run a hand-written loop of live reset commands. This routing takes priority over the general account-information update workflow.
 
+In the graphical launcher's single-account form, resolve the dispatcher through the shared asynchronous server-side fuzzy-search dropdown backed by `account_list_request`. Require one selected returned account and reject free-form text before starting the authenticated preview; the reset workflow still re-queries and validates that exact account.
+
 ## Verified protocol
 
 Match the PUC frontend reset-password behavior:

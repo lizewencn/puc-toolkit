@@ -530,7 +530,17 @@ function Set-PucRuntimeEntry {
 function Get-PucPropertyPath {
     param($Object, [Parameter(Mandatory)][string]$Path)
     $current = $Object
-    foreach ($part in $Path.Split('.')) { if ($null -eq $current) { return $null }; $current = $current.$part }
+    foreach ($part in $Path.Split('.')) {
+        if ($null -eq $current) { return $null }
+        if ($current -is [System.Collections.IDictionary]) {
+            if (-not $current.Contains($part)) { return $null }
+            $current = $current[$part]
+            continue
+        }
+        $property = $current.PSObject.Properties[$part]
+        if ($null -eq $property) { return $null }
+        $current = $property.Value
+    }
     return $current
 }
 

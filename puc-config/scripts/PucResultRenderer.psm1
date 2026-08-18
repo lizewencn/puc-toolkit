@@ -181,7 +181,7 @@ function Get-PucResultErrorSummary([string]$RawText, $LatestRecord) {
     foreach ($line in @($RawText -split "`r?`n")) {
         $candidate = $line.Trim()
         if ([string]::IsNullOrWhiteSpace($candidate) -or $candidate.StartsWith('{') -or $candidate.StartsWith('[')) { continue }
-        if ($candidate -match '^(At |\+ |CategoryInfo|FullyQualifiedErrorId)') { continue }
+        if ($candidate -match '^(At |\+ |CategoryInfo|FullyQualifiedErrorId|=== )') { continue }
         if ($candidate.Length -gt 500) { return $candidate.Substring(0,497) + '...' }
         return $candidate
     }
@@ -196,6 +196,7 @@ function New-PucResultModel {
         [string]$OperationLabel = '',
         [string]$Environment = '',
         [string]$Stage = '',
+        [object[]]$ExecutionNodes = @(),
         [datetime]$StartedAt = [datetime]::Now,
         [ValidateSet('Idle','Progress','Confirmation','Finished')][string]$ViewState = 'Idle',
         [int]$ExitCode = 0
@@ -224,7 +225,25 @@ function New-PucResultModel {
     Add-PucResultField $fields $seen 'environment' $Environment
     $elapsed = [Math]::Max(0,([datetime]::Now - $StartedAt).TotalSeconds)
     $fields.Add([pscustomobject]@{Name='duration';Label='耗时';Value=('{0:N1} 秒' -f $elapsed)})
-    if (-not [string]::IsNullOrWhiteSpace($Stage)) {
+    if (@($ExecutionNodes).Count -gt 0) {
+        $nodeNumber = 0
+        foreach ($node in @($ExecutionNodes)) {
+            $nodeNumber++
+            $nodeStatus = switch ([string]$node.Status) {
+                'running' {'执行中'}
+                'completed' {'已完成'}
+                'failed' {'失败'}
+                'skipped' {'已跳过'}
+                default {'待执行'}
+            }
+            $fields.Add([pscustomobject]@{
+                Name="executionNode$nodeNumber"
+                Label="$nodeNumber."
+                Value="$([string]$node.Label)（$nodeStatus）"
+                Status=[string]$node.Status
+            })
+        }
+    } elseif (-not [string]::IsNullOrWhiteSpace($Stage)) {
         $fields.Add([pscustomobject]@{Name='stage';Label='执行阶段';Value=$Stage})
     }
 

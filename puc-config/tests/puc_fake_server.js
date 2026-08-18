@@ -25,6 +25,8 @@ const accounts = new Map(['mhw19001', 'mhw19002', 'other', 'new1001', 'new1002',
   is_change_pwd: 0,
 }]));
 const writes = [];
+const accountQueries = [];
+const personnelRequests = [];
 let policyQueries = 0;
 let loginComplete = false;
 let authenticatedCommonQueries = 0;
@@ -54,7 +56,7 @@ const server = http.createServer((request, response) => {
         hasFile: raw.includes(Buffer.from('name="upload"; filename="sample.bin"')) && raw.includes(Buffer.from([0, 1, 2, 253, 254, 255])),
       });
     }
-    if (request.url === '/writes') return send(response, { writes, policyQueries, authenticatedCommonQueries, loginPucIds });
+    if (request.url === '/writes') return send(response, { writes, accountQueries, personnelRequests, policyQueries, authenticatedCommonQueries, loginPucIds });
     if (request.url !== '/confs') return send(response, { result: 404, msg: 'not found' });
     let body;
     try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
@@ -88,9 +90,18 @@ const server = http.createServer((request, response) => {
     if (body.cmd_name === 'short_organization_list_request') return send(response, { result: 0, organization_info_list: [{ org_identifier: '00', org_alias: 'Dispatch', parent_org_identifier: '' }] });
     if (body.cmd_name === 'personnel_organization_list_req') return send(response, { result: 0, organization_info_list: [{ custom_org_id: '00', custom_org_alias: 'Dispatch', parent_custom_org_id: '' }] });
     if (body.cmd_name === 'account_list_request') {
+      accountQueries.push({ querykey: body.querykey, is_fuzzy_qry: body.is_fuzzy_qry });
       const query = String(body.querykey || '').toLowerCase();
       const list = [...accounts.values()].filter((item) => item.dispatcher_account.toLowerCase().includes(query));
       return send(response, { result: 0, account_list: list, page_count: 1 });
+    }
+    if (body.cmd_name === 'custom_police_info_list_req') {
+      personnelRequests.push({ command: body.cmd_name, querykey: body.querykey, number_type: body.number_type });
+      return send(response, { result: 0, police_info_list: [], page_count: 1 });
+    }
+    if (body.cmd_name === 'conf_add_personnel_info_req') {
+      personnelRequests.push({ command: body.cmd_name, number_type: body.personnel_info?.number_type });
+      return send(response, { result: 0, msg: 'ok' });
     }
     if (body.cmd_name === 'update_account') {
       writes.push({ account: body.dispatcher_account, password: body.dispatcher_pwd, isChangePassword: body.is_change_pwd, fields: Object.keys(body) });

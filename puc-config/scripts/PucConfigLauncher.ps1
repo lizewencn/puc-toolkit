@@ -79,6 +79,59 @@ $forceUpgradeOptions = @(
     [pscustomobject]@{Label='否';Value=$false},
     [pscustomobject]@{Label='是';Value=$true}
 )
+$personnelTypeOptions = @(
+    [pscustomobject]@{Label='人员';Value='102'},
+    [pscustomobject]@{Label='车';Value='103'},
+    [pscustomobject]@{Label='应急车';Value='104'}
+)
+
+function New-PucExecutionNode([string]$Label, [string[]]$Stages) {
+    [pscustomobject]@{Label=$Label;Stages=@($Stages);Status='pending'}
+}
+
+function Get-PucExecutionNodeDefinitions([string]$Operation, [string]$Action = '') {
+    switch ($Operation) {
+        'android-upgrade' {
+            return @(
+                (New-PucExecutionNode '解析 APK' @('android-upgrade-inspect')),
+                (New-PucExecutionNode '检查升级包' @('android-upgrade-preview')),
+                (New-PucExecutionNode '制作升级包' @('android-upgrade-build'))
+            )
+        }
+        'create' { return @((New-PucExecutionNode '新增调度账号' @('create-live','create-large-live'))) }
+        'reset' { return @((New-PucExecutionNode '密码重置预检' @('reset-preview')),(New-PucExecutionNode '重置密码' @('reset-live'))) }
+        {$_ -in @('reset-query','reset-file')} { return @((New-PucExecutionNode '批量重置预检' @('batch-reset-preview')),(New-PucExecutionNode '批量重置密码' @('batch-reset-live'))) }
+        'complete' { return @((New-PucExecutionNode '账号补全预检' @('completion-preview')),(New-PucExecutionNode '补全账号信息' @('completion-live'))) }
+        'update' { return @((New-PucExecutionNode '检查变更文件' @('update-plan')),(New-PucExecutionNode '账号更新预检' @('update-preview')),(New-PucExecutionNode '更新账号' @('update-live'))) }
+        {$_ -in @('personnel-prefix','personnel-exact')} { return @((New-PucExecutionNode '人员新增预检' @('personnel-preview')),(New-PucExecutionNode '新增人员' @('personnel-live'))) }
+        'policy' {
+            if ($Action -eq 'Status') { return @((New-PucExecutionNode '查询首次登录策略' @('policy-status'))) }
+            return @((New-PucExecutionNode '首次登录策略预检' @('policy-preview')),(New-PucExecutionNode '更新首次登录策略' @('policy-live')))
+        }
+        'force-login' {
+            if ($Action -eq 'Status') { return @((New-PucExecutionNode '查询重复登录策略' @('force-status'))) }
+            return @((New-PucExecutionNode '重复登录策略预检' @('force-preview')),(New-PucExecutionNode '更新重复登录策略' @('force-live')))
+        }
+        'config-export' { return @((New-PucExecutionNode '导出配置和 License' @('config-export'))) }
+        'config-import' { return @((New-PucExecutionNode '检查配置文件' @('config-import-plan')),(New-PucExecutionNode '导入配置' @('config-import-live'))) }
+        'license-export' { return @((New-PucExecutionNode '导出 License' @('license-export'))) }
+        'license-import' { return @((New-PucExecutionNode '检查 License 文件' @('license-import-plan')),(New-PucExecutionNode 'License 导入预检' @('license-import-preview')),(New-PucExecutionNode '导入 License' @('license-import-live'))) }
+        'permission-import' { return @((New-PucExecutionNode '检查权限菜单' @('permission-import-plan')),(New-PucExecutionNode '导入权限菜单' @('permission-import-live'))) }
+        'incident-levels' { return @((New-PucExecutionNode '警情等级预检' @('incident-preview')),(New-PucExecutionNode '配置警情等级' @('incident-live'))) }
+        default { return @() }
+    }
+}
+
+function Get-PucExecutionNodeForStage($Nodes, [string]$Stage) {
+    return @($Nodes | Where-Object { $Stage -in @($_.Stages) } | Select-Object -First 1)
+}
+
+function Set-PucPendingExecutionNodesSkipped($State) {
+    if ($null -eq $State) { return }
+    foreach ($node in @($State.ExecutionNodes)) {
+        if ([string]$node.Status -eq 'pending') { $node.Status = 'skipped' }
+    }
+}
 
 $script:Operations = @(
     [pscustomobject]@{Key='create';Label='新增调度账号';Fields=@(
@@ -86,7 +139,7 @@ $script:Operations = @(
         (New-Field 'count' '创建数量' 'Number' 1)
     )},
     [pscustomobject]@{Key='reset';Label='重置单个账号密码';Fields=@(
-        (New-Field 'account' '调度账号' 'Text')
+        (New-Field 'account' '调度账号（输入关键字搜索）' 'SearchCombo')
     )},
     [pscustomobject]@{Key='reset-query';Label='批量重置密码（按查询）';Fields=@(
         (New-Field 'query' '账号查询关键字' 'Text')
@@ -100,21 +153,21 @@ $script:Operations = @(
         (New-Field 'normalizeAlias' '规范生成账号别名' 'Check' $false)
     )},
     [pscustomobject]@{Key='update';Label='更新账号信息';Fields=@(
-        (New-Field 'account' '调度账号' 'Text'),
+        (New-Field 'account' '调度账号（输入关键字搜索）' 'SearchCombo'),
         (New-Field 'changesPath' '变更 JSON' 'File' '' @() 'JSON 文件 (*.json)|*.json')
     )},
     [pscustomobject]@{Key='personnel-prefix';Label='批量新增通讯录人员';Fields=@(
         (New-Field 'aliasValue' '人员别名前缀' 'Text'),
         (New-Field 'startSequence' '起始序号' 'Number' 0),
         (New-Field 'count' '创建数量' 'Number' 1),
-        (New-Field 'personnelTypeGuid' '人员类型 GUID' 'Text'),
-        (New-Field 'dispatcherAccount' '关联调度账号（可选）' 'Text'),
+        (New-Field 'numberType' '类型' 'Combo' '102' $personnelTypeOptions),
+        (New-Field 'dispatcherAccount' '关联调度账号（输入关键字搜索，可选）' 'SearchCombo'),
         (New-Field 'rootOrganizationName' '根组织名称（可选）' 'Text')
     )},
     [pscustomobject]@{Key='personnel-exact';Label='新增指定通讯录人员';Fields=@(
         (New-Field 'aliasValue' '人员别名' 'Text'),
-        (New-Field 'personnelTypeGuid' '人员类型 GUID' 'Text'),
-        (New-Field 'dispatcherAccount' '关联调度账号（可选）' 'Text'),
+        (New-Field 'numberType' '类型' 'Combo' '102' $personnelTypeOptions),
+        (New-Field 'dispatcherAccount' '关联调度账号（输入关键字搜索，可选）' 'SearchCombo'),
         (New-Field 'rootOrganizationName' '根组织名称（可选）' 'Text')
     )},
     [pscustomobject]@{Key='policy';Label='首次登录密码验证';Fields=@(
@@ -199,6 +252,11 @@ if ($SelfTest) {
     if ($keys.Count -ne $script:Operations.Count) { throw '操作目录中存在重复键。' }
     $expectedKeys = @('create','reset','reset-query','reset-file','complete','update','personnel-prefix','personnel-exact','policy','force-login','config-export','config-import','license-export','license-import','permission-import','incident-levels','android-upgrade')
     foreach ($key in $expectedKeys) { if ($key -notin $keys) { throw "操作目录缺少 $key。" } }
+    foreach ($key in $expectedKeys) {
+        $action = if ($key -in @('policy','force-login')) {'Status'} else {''}
+        if (@(Get-PucExecutionNodeDefinitions -Operation $key -Action $action).Count -lt 1) { throw "操作 $key 未定义执行节点。" }
+    }
+    if (@(Get-PucExecutionNodeDefinitions -Operation 'update').Count -ne 3 -or @(Get-PucExecutionNodeDefinitions -Operation 'policy' -Action 'Enable').Count -ne 2) { throw '多阶段操作的执行节点定义不正确。' }
     $upgradeOperation = $script:Operations | Where-Object Key -eq 'android-upgrade'
     $upgradeKinds = @{}
     foreach ($field in @($upgradeOperation.Fields)) { $upgradeKinds[[string]$field.Key] = [string]$field.Kind }
@@ -207,12 +265,22 @@ if ($SelfTest) {
     if (@($script:Operations | Where-Object Key -eq 'create').Fields.Key -contains 'startSequence') {
         throw '调度账号创建不得询问起始序号。'
     }
+    foreach ($personnelOperation in @($script:Operations | Where-Object Key -in @('personnel-prefix','personnel-exact'))) {
+        $typeField = @($personnelOperation.Fields | Where-Object Key -eq 'numberType')
+        $dispatcherField = @($personnelOperation.Fields | Where-Object Key -eq 'dispatcherAccount')
+        if ($typeField.Count -ne 1 -or $typeField[0].Kind -ne 'Combo' -or (@($typeField[0].Options.Value) -join ',') -ne '102,103,104') { throw '人员类型下拉字段定义不正确。' }
+        if ($dispatcherField.Count -ne 1 -or $dispatcherField[0].Kind -ne 'SearchCombo') { throw '调度员模糊搜索字段定义不正确。' }
+    }
+    $updateAccountField = @(@($script:Operations | Where-Object Key -eq 'update')[0].Fields | Where-Object Key -eq 'account')
+    if ($updateAccountField.Count -ne 1 -or $updateAccountField[0].Kind -ne 'SearchCombo') { throw '更新账号信息的调度账号模糊搜索字段定义不正确。' }
+    $resetAccountField = @(@($script:Operations | Where-Object Key -eq 'reset')[0].Fields | Where-Object Key -eq 'account')
+    if ($resetAccountField.Count -ne 1 -or $resetAccountField[0].Kind -ne 'SearchCombo') { throw '重置单个账号密码的调度账号模糊搜索字段定义不正确。' }
     $environmentUri = ConvertTo-PucBaseUrlFromIp '10.161.30.163'
     if ($environmentUri.AbsoluteUri -ne 'https://10.161.30.163:16890/') { throw '服务 IP 默认地址拼接失败。' }
     $fullUrlRejected = $false
     try { [void](ConvertTo-PucBaseUrlFromIp 'https://10.161.30.163:16890') } catch { $fullUrlRejected = $true }
     if (-not $fullUrlRejected) { throw '新增环境不得接受包含协议或端口的服务地址。' }
-    $workflowScripts = @('Initialize-PucConfig.ps1','Repair-PucEnvironmentNames.ps1','Get-PucEnvironmentVersion.ps1','Invoke-PucAccounts.ps1','Invoke-PucAccountPasswordReset.ps1','Invoke-PucAccountPasswordResetBatch.ps1','Invoke-PucAccountCompletion.ps1','Invoke-PucAccountUpdate.ps1','Invoke-PucPersonnel.ps1','Invoke-PucFirstLoginPasswordCheck.ps1','Invoke-PucForceLogin.ps1','Invoke-PucConfigTransfer.ps1','Invoke-PucLicense.ps1','Invoke-PucPermissionMenuImport.ps1','Invoke-PucIncidentAlarmLevels.ps1','Invoke-AndroidUpgradePackage.ps1','PucResultRenderer.psm1')
+    $workflowScripts = @('Initialize-PucConfig.ps1','Repair-PucEnvironmentNames.ps1','Get-PucEnvironmentVersion.ps1','Invoke-PucAccounts.ps1','Invoke-PucAccountPasswordReset.ps1','Invoke-PucAccountPasswordResetBatch.ps1','Invoke-PucAccountCompletion.ps1','Invoke-PucAccountUpdate.ps1','Invoke-PucPersonnel.ps1','Invoke-PucDispatcherSearch.ps1','Invoke-PucFirstLoginPasswordCheck.ps1','Invoke-PucForceLogin.ps1','Invoke-PucConfigTransfer.ps1','Invoke-PucLicense.ps1','Invoke-PucPermissionMenuImport.ps1','Invoke-PucIncidentAlarmLevels.ps1','Invoke-AndroidUpgradePackage.ps1','PucResultRenderer.psm1')
     foreach ($workflowScript in $workflowScripts) {
         if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $workflowScript) -PathType Leaf)) { throw "工作流脚本不存在：$workflowScript" }
     }
@@ -230,6 +298,8 @@ if ($SelfTest) {
     if ($partialModel.Kind -ne 'Warning' -or @($partialModel.Rows).Count -ne 2) { throw '部分失败结果表格验证失败。' }
     $stageModel = New-PucResultModel -Outputs @('{"status":"previewed","accounts":[{"account":"mhw1"},{"account":"mhw2"}]}','{"status":"password-reset","results":[{"account":"mhw1","status":"password-reset"},{"account":"mhw2","status":"password-reset"}]}') -OperationLabel '批量重置密码' -Environment '10.161.30.163' -Stage 'batch-reset-live' -StartedAt $resultStartedAt -ViewState Finished -ExitCode 0
     if (@($stageModel.Rows).Count -ne 2 -or @($stageModel.Rows | Where-Object group -eq '账号').Count -ne 0) { throw '执行结果不得混合预检与最终阶段数据。' }
+    $nodeModel = New-PucResultModel -Outputs @('{"status":"previewed","results":[{"alias":"test","status":"planned"}]}') -OperationLabel '新增人员' -Environment '10.161.30.163' -ExecutionNodes @([pscustomobject]@{Label='人员新增预检';Status='completed'},[pscustomobject]@{Label='新增人员';Status='running'}) -StartedAt $resultStartedAt -ViewState Progress
+    if (@($nodeModel.Fields | Where-Object Name -like 'executionNode*').Count -ne 2 -or [string]$nodeModel.Fields[2].Label -ne '1.') { throw '编号执行节点摘要渲染失败。' }
     $createModel = New-PucResultModel -Outputs @('{"status":"created","count":2,"succeeded":2,"failed":0,"results":[{"sequence":1,"account":"mhw163001","alias":"mhw163001_alias","status":"created"},{"sequence":2,"account":"mhw163002","alias":"mhw163002_alias","status":"created"}]}','{"status":"post-create-login-policy","environment":"10.161.30.163"}') -OperationLabel '新增调度账号' -Environment '10.161.30.163' -Stage 'create-live' -StartedAt $resultStartedAt -ViewState Finished -ExitCode 0
     if (@($createModel.Rows).Count -ne 2 -or [string]$createModel.Rows[0].account -ne 'mhw163001') { throw '新增账号执行结果表格验证失败。' }
     $errorModel = New-PucResultModel -Outputs @('Request failed; authorization=SECRET-VALUE. No retry was attempted.') -OperationLabel '更新账号' -Environment '10.161.30.163' -Stage 'update-live' -StartedAt $resultStartedAt -ViewState Finished -ExitCode 1
@@ -268,6 +338,8 @@ $script:FieldControls = @{}
 $script:VersionLookup = $null
 $script:PendingVersionEnvironment = ''
 $script:LastUpgradePackagePath = ''
+$script:DispatcherLookup = $null
+$script:UploadButtonRequestedVisible = $false
 
 function Get-EnvironmentEntries {
     $root = Get-PucConfigRoot
@@ -328,6 +400,14 @@ function Get-FieldValue([string]$Key) {
         'Number' { return [int]$entry.Input.Value }
         'Check' { return [bool]$entry.Input.Checked }
         'Combo' { return [string]$entry.Input.SelectedItem.Value }
+        'SearchCombo' {
+            $text = $entry.Input.Text.Trim()
+            if ([string]::IsNullOrWhiteSpace($text)) { return '' }
+            if ($null -eq $entry.Input.SelectedItem -or [string]$entry.Input.SelectedItem.Label -ne $text) {
+                throw '请从调度账号搜索下拉列表中选择一个账号。'
+            }
+            return [string]$entry.Input.SelectedItem.Value
+        }
         'Radio' {
             $selected = @($entry.Input.Controls | Where-Object { $_ -is [Windows.Forms.RadioButton] -and $_.Checked } | Select-Object -First 1)
             if ($selected.Count -eq 0) { return $false }
@@ -491,6 +571,7 @@ $uploadButton.Text = '上传'
 $uploadButton.Location = New-Object Drawing.Point(272,14)
 $uploadButton.Size = New-Object Drawing.Size(112,34)
 $uploadButton.Enabled = $false
+$uploadButton.Visible = $false
 Set-PucButtonStyle $uploadButton 'Primary'
 $actionPanel.Controls.Add($uploadButton)
 
@@ -516,9 +597,84 @@ $statusLabel.AutoSize = $false
 $statusLabel.ForeColor = [Drawing.Color]::FromArgb(92,102,110)
 $statusLabel.Location = New-Object Drawing.Point(282,12)
 $statusLabel.Size = New-Object Drawing.Size(450,38)
+$statusLabel.Anchor = 'Top,Left,Right'
 $statusLabel.TextAlign = [Drawing.ContentAlignment]::MiddleLeft
 $statusLabel.AutoEllipsis = $true
 $actionPanel.Controls.Add($statusLabel)
+
+function Update-ActionPanelLayout {
+    $showUpload = $null -ne $operationBox.SelectedItem -and [string]$operationBox.SelectedItem.Key -eq 'android-upgrade'
+    $script:UploadButtonRequestedVisible = $showUpload
+    $uploadButton.Visible = $showUpload
+    $statusLeft = if ($showUpload) {396} else {282}
+    $statusLabel.Left = $statusLeft
+    $statusLabel.Width = [Math]::Max(120,$actionPanel.ClientSize.Width - $statusLeft - 28)
+}
+
+function Request-DispatcherLookup([Windows.Forms.ComboBox]$Control) {
+    if ($null -ne $Control.SelectedItem -and [string]$Control.SelectedItem.Label -eq $Control.Text) { return }
+    $query = $Control.Text.Trim()
+    if ($null -eq $script:DispatcherLookup) {
+        $script:DispatcherLookup = [pscustomobject]@{Control=$Control;Query=$query;RequestedQuery='';RequestedEnvironment='';DueAt=[datetime]::Now.AddMilliseconds(400);StartedAt=[datetime]::Now;Handle=$null}
+    } else {
+        $script:DispatcherLookup.Control = $Control
+        $script:DispatcherLookup.Query = $query
+        $script:DispatcherLookup.DueAt = [datetime]::Now.AddMilliseconds(400)
+    }
+    if ([string]::IsNullOrWhiteSpace($query)) {
+        $Control.Items.Clear()
+        $Control.SelectedIndex = -1
+    }
+}
+
+function Update-DispatcherLookup {
+    $lookup = $script:DispatcherLookup
+    if ($null -eq $lookup) { return }
+    if ($null -ne $lookup.Handle) {
+        $lookup.Handle.Process.Refresh()
+        if (-not $lookup.Handle.Process.HasExited) { return }
+        $result = Complete-HiddenProcess $lookup.Handle
+        $lookup.Handle = $null
+        $control = $lookup.Control
+        $currentEnvironment = if ($null -ne $environmentBox.SelectedItem) { [string]$environmentBox.SelectedItem.Name } else { '' }
+        if ($null -ne $control -and -not $control.IsDisposed -and $lookup.RequestedQuery -eq $control.Text.Trim() -and $lookup.RequestedEnvironment -eq $currentEnvironment) {
+            if ($result.ExitCode -eq 0) {
+                $document = Get-LastJsonObject $result.Text
+                $typedText = $control.Text
+                $control.BeginUpdate()
+                try {
+                    $control.Items.Clear()
+                    foreach ($row in @($document.results)) {
+                        [void]$control.Items.Add([pscustomobject]@{Label=[string]$row.label;Value=[string]$row.account})
+                    }
+                    $control.SelectedIndex = -1
+                    $control.Text = $typedText
+                    $control.SelectionStart = $control.Text.Length
+                } finally { $control.EndUpdate() }
+                if ($control.Focused -and $control.Items.Count -gt 0) { $control.DroppedDown = $true }
+            } else {
+                Show-PucStandaloneResult -OperationLabel '搜索调度账号' -Environment ([string]$lookup.RequestedEnvironment) -Stage '调度账号模糊搜索' -Outputs @($result.Text) -StartedAt ([datetime]$lookup.StartedAt) -ViewState Finished -ExitCode $result.ExitCode
+                $statusLabel.Text = '调度账号搜索失败，请查看服务状态后重试。'
+                $statusLabel.ForeColor = [Drawing.Color]::FromArgb(184,70,45)
+            }
+        }
+        if ($lookup.Query -ne $lookup.RequestedQuery) { $lookup.DueAt = [datetime]::Now.AddMilliseconds(200) }
+        return
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$lookup.Query) -or [datetime]::Now -lt $lookup.DueAt) { return }
+    if ($null -eq $lookup.Control -or $lookup.Control.IsDisposed -or $null -eq $environmentBox.SelectedItem) { return }
+    $lookup.RequestedQuery = [string]$lookup.Query
+    $lookup.RequestedEnvironment = [string]$environmentBox.SelectedItem.Name
+    $lookup.DueAt = [datetime]::MaxValue
+    $lookup.StartedAt = [datetime]::Now
+    try {
+        $lookup.Handle = New-HiddenProcess @('Invoke-PucDispatcherSearch.ps1','-Environment',$lookup.RequestedEnvironment,'-Query',$lookup.RequestedQuery)
+    } catch {
+        Show-PucStandaloneResult -OperationLabel '搜索调度账号' -Environment ([string]$lookup.RequestedEnvironment) -Stage '调度账号模糊搜索' -Outputs @($_.Exception.Message) -StartedAt ([datetime]$lookup.StartedAt) -ViewState Finished -ExitCode 1
+        $statusLabel.Text = '调度账号搜索失败，请查看详细输出。'
+        $statusLabel.ForeColor = [Drawing.Color]::FromArgb(184,70,45)
+    }
+}
 
 $resultLabel = New-Object Windows.Forms.Label
 $resultLabel.Text = '运行信息'
@@ -692,6 +848,17 @@ function Show-PucResultModel($Model) {
             $item = New-Object Windows.Forms.ListViewItem([string]$field.Label)
             [void]$item.SubItems.Add([string]$field.Value)
             $item.ToolTipText = "$([string]$field.Label)：$([string]$field.Value)"
+            $statusProperty = $field.PSObject.Properties['Status']
+            if ($null -ne $statusProperty) {
+                $nodePalette = switch ([string]$statusProperty.Value) {
+                    'running' { @{Back=[Drawing.Color]::FromArgb(232,244,252);Fore=[Drawing.Color]::FromArgb(0,92,153)} }
+                    'completed' { @{Back=[Drawing.Color]::FromArgb(231,245,239);Fore=[Drawing.Color]::FromArgb(0,115,90)} }
+                    'failed' { @{Back=[Drawing.Color]::FromArgb(253,236,234);Fore=[Drawing.Color]::FromArgb(184,70,45)} }
+                    default { @{Back=[Drawing.Color]::White;Fore=[Drawing.Color]::FromArgb(92,102,110)} }
+                }
+                $item.BackColor = $nodePalette.Back
+                $item.ForeColor = $nodePalette.Fore
+            }
             [void]$resultFields.Items.Add($item)
         }
     } finally { $resultFields.EndUpdate() }
@@ -836,6 +1003,18 @@ function New-InputControl($Field, [int]$X, [int]$Y, [int]$Width) {
             $input.Location = New-Object Drawing.Point($X,$controlY)
             $input.Size = New-Object Drawing.Size($Width,28)
         }
+        'SearchCombo' {
+            $input = New-Object Windows.Forms.ComboBox
+            $input.DropDownStyle = 'DropDown'
+            $input.DisplayMember = 'Label'
+            $input.ValueMember = 'Value'
+            $input.Location = New-Object Drawing.Point($X,$controlY)
+            $input.Size = New-Object Drawing.Size($Width,28)
+            $input.Add_TextUpdate({
+                param($sender,$eventArgs)
+                Request-DispatcherLookup -Control ([Windows.Forms.ComboBox]$sender)
+            })
+        }
         'File' {
             $input = New-Object Windows.Forms.TextBox
             $input.Text = [string]$Field.Default
@@ -899,9 +1078,11 @@ function New-InputControl($Field, [int]$X, [int]$Y, [int]$Width) {
 function Rebuild-Inputs {
     $script:LastUpgradePackagePath = ''
     $uploadButton.Enabled = $false
+    Update-ActionPanelLayout
     $inputPanel.SuspendLayout()
     $inputPanel.Controls.Clear()
     $script:FieldControls = @{}
+    if ($null -ne $script:DispatcherLookup) { $script:DispatcherLookup.Control = $null }
     $fields = @($operationBox.SelectedItem.Fields)
     if ($fields.Count -eq 0) {
         Resize-FormForFields 0
@@ -1092,6 +1273,8 @@ function Show-NewEnvironmentDialog {
 
 function Start-Stage([string]$Stage, [string[]]$Arguments) {
     $script:ExecutionState.Stage = $Stage
+    $node = @(Get-PucExecutionNodeForStage -Nodes $script:ExecutionState.ExecutionNodes -Stage $Stage)
+    if ($node.Count -eq 1) { $node[0].Status = 'running' }
     $script:ExecutionState.Handle = New-HiddenProcess $Arguments
     $statusLabel.Text = switch -Wildcard ($Stage) {
         '*-plan' {'正在检查文件...'}
@@ -1112,6 +1295,7 @@ function Show-CurrentOutputs {
         -OperationLabel (Get-PucOperationDisplayLabel ([string]$script:ExecutionState.Operation)) `
         -Environment ([string]$script:ExecutionState.Environment) `
         -Stage (Get-PucStageDisplayLabel ([string]$script:ExecutionState.Stage)) `
+        -ExecutionNodes @($script:ExecutionState.ExecutionNodes) `
         -StartedAt ([datetime]$script:ExecutionState.StartedAt) `
         -ViewState $ViewState `
         -ExitCode $ExitCode
@@ -1171,6 +1355,7 @@ function Cancel-PendingPreview {
     if ($null -eq $script:ExecutionState -or $null -eq $script:ExecutionState.PendingConfirmation) { return }
     $cancelText = [string]$script:ExecutionState.PendingConfirmation.CancelText
     $script:ExecutionState.PendingConfirmation = $null
+    Set-PucPendingExecutionNodesSkipped $script:ExecutionState
     Set-ConfirmationMode $false
     Finish-Execution 0 $cancelText
 }
@@ -1184,7 +1369,10 @@ function Start-RequestedWorkflow {
         Outputs=[Collections.Generic.List[string]]::new()
         TempPaths=[Collections.Generic.List[string]]::new()
         Data=@{}
+        ExecutionNodes=[Collections.Generic.List[object]]::new()
     }
+    $executionAction = if ($operation -in @('policy','force-login')) { [string](Get-FieldValue 'action') } else { '' }
+    foreach ($node in @(Get-PucExecutionNodeDefinitions -Operation $operation -Action $executionAction)) { $state.ExecutionNodes.Add($node) }
     $script:ExecutionState = $state
     switch ($operation) {
         'android-upgrade' {
@@ -1234,9 +1422,9 @@ function Start-RequestedWorkflow {
         }
         {$_ -in @('personnel-prefix','personnel-exact')} {
             $alias=[string](Get-FieldValue 'aliasValue');Assert-SafeArgument $alias '人员别名或前缀'
-            $guidText=[string](Get-FieldValue 'personnelTypeGuid');$parsedGuid=[guid]::Empty
-            if(-not [guid]::TryParse($guidText,[ref]$parsedGuid)){throw '人员类型 GUID 格式不正确。'}
-            $arguments=@('Invoke-PucPersonnel.ps1','-Environment',$environment,'-PersonnelTypeGuid',$guidText)
+            $numberType=[string](Get-FieldValue 'numberType')
+            if($numberType -notin @('102','103','104')){throw '人员类型不正确。'}
+            $arguments=@('Invoke-PucPersonnel.ps1','-Environment',$environment,'-NumberType',$numberType)
             if($operation -eq 'personnel-exact'){$arguments+=@('-ExactAlias',$alias)}else{
                 $count=[int](Get-FieldValue 'count');if($count -lt 1){throw '创建数量必须大于 0。'}
                 $arguments+=@('-AliasPrefix',$alias,'-StartSequence',[string](Get-FieldValue 'startSequence'),'-Count',[string]$count)
@@ -1280,14 +1468,23 @@ $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 200
 $timer.Add_Tick({
     Update-EnvironmentVersionLookup
+    Update-DispatcherLookup
     if($null -eq $script:ExecutionState -or $null -eq $script:ExecutionState.Handle){return}
     $process=$script:ExecutionState.Handle.Process;$process.Refresh();if(-not $process.HasExited){return}
     $result=Complete-HiddenProcess $script:ExecutionState.Handle
     $script:ExecutionState.Handle=$null
     $stage=[string]$script:ExecutionState.Stage
-    if(-not [string]::IsNullOrWhiteSpace($result.Text)){$script:ExecutionState.Outputs.Add($result.Text)}
+    $node = @(Get-PucExecutionNodeForStage -Nodes $script:ExecutionState.ExecutionNodes -Stage $stage)
+    if ($node.Count -eq 1) { $node[0].Status = if ($result.ExitCode -eq 0) {'completed'} else {'failed'} }
+    $stageHeading = if ($node.Count -eq 1) {
+        $nodeIndex = [array]::IndexOf(@($script:ExecutionState.ExecutionNodes),$node[0]) + 1
+        "=== $nodeIndex. $([string]$node[0].Label) ==="
+    } else { "=== $(Get-PucStageDisplayLabel $stage) ===" }
+    $stageOutput = if ([string]::IsNullOrWhiteSpace($result.Text)) {'（无输出）'} else {$result.Text}
+    $script:ExecutionState.Outputs.Add("$stageHeading`r`n$stageOutput")
 
     if($stage -eq 'create-live' -and $result.ExitCode -ne 0 -and $result.Text -match 'ACCOUNT_LOOKUP_DECISION_REQUIRED'){
+        if ($node.Count -eq 1) { $node[0].Status = 'pending' }
         Request-PreviewConfirmation -Prompt '请查看完整账号预览，确认是否继续创建。' -NextStage 'create-large-live' -Arguments @('Invoke-PucAccounts.ps1','-Environment',$script:ExecutionState.Environment,'-Prefix',$script:ExecutionState.Data.Prefix,'-Count',[string]$script:ExecutionState.Data.Count,'-Live','-ConfirmLive','-ContinueWhenMoreThan30Accounts') -CancelText '用户已取消继续创建。';return
     }
     if($result.ExitCode -ne 0){Finish-Execution $result.ExitCode;return}
@@ -1335,11 +1532,11 @@ $timer.Add_Tick({
             }
             'personnel-preview' { Start-Stage 'personnel-live' (@($script:ExecutionState.Data.BaseArguments)+@('-Live','-ConfirmLive'));return }
             'policy-preview' {
-                if($json.writeRequired -ne $true){Finish-Execution 0;return}
+                if($json.writeRequired -ne $true){Set-PucPendingExecutionNodesSkipped $script:ExecutionState;Finish-Execution 0;return}
                 Start-Stage 'policy-live' @('Invoke-PucFirstLoginPasswordCheck.ps1','-Environment',$script:ExecutionState.Environment,'-Action',$script:ExecutionState.Data.Action,'-Live','-ConfirmLive');return
             }
             'force-preview' {
-                if([string]$json.status -eq 'no-change'){Finish-Execution 0;return}
+                if([string]$json.status -eq 'no-change'){Set-PucPendingExecutionNodesSkipped $script:ExecutionState;Finish-Execution 0;return}
                 Start-Stage 'force-live' @('Invoke-PucForceLogin.ps1','-Environment',$script:ExecutionState.Environment,'-Action',$script:ExecutionState.Data.Action,'-Live','-ConfirmLive');return
             }
             'config-import-plan' {
@@ -1367,6 +1564,7 @@ $timer.Start()
 
 $operationBox.Add_SelectedIndexChanged({Rebuild-Inputs})
 $environmentBox.Add_SelectedIndexChanged({Update-EnvironmentAddress})
+$actionPanel.Add_SizeChanged({Update-ActionPanelLayout})
 $form.Add_Resize({
     if ($resultFields.Columns.Count -ge 2) {
         $resultFields.Columns[1].Width = [Math]::Max(180,$resultFields.ClientSize.Width - $resultFields.Columns[0].Width - 8)
@@ -1444,12 +1642,71 @@ $form.Add_FormClosing({
 
 if ($UiSelfTest) {
     try {
-        if ($uploadButton.Enabled) { throw '上传按钮初始状态必须禁用。' }
+        if ($uploadButton.Enabled -or $script:UploadButtonRequestedVisible) { throw '非 Android 升级包操作不得显示或启用上传按钮。' }
+        $operationBox.SelectedItem = @($script:Operations | Where-Object Key -eq 'android-upgrade')[0]
+        Rebuild-Inputs
+        if (-not $script:UploadButtonRequestedVisible -or $uploadButton.Enabled) { throw 'Android 升级包操作必须显示处于禁用状态的上传按钮。' }
+        if ($uploadButton.Bounds.IntersectsWith($statusLabel.Bounds)) { throw '上传按钮与状态文本发生重叠。' }
+        $operationBox.SelectedItem = @($script:Operations | Where-Object Key -eq 'reset-query')[0]
+        Rebuild-Inputs
+        if ($script:UploadButtonRequestedVisible) { throw '切换到非 Android 升级包操作后上传按钮仍然可见。' }
+        $operationBox.SelectedItem = @($script:Operations | Where-Object Key -eq 'personnel-exact')[0]
+        Rebuild-Inputs
+        $typeControl = $script:FieldControls['numberType'].Input
+        $dispatcherControl = $script:FieldControls['dispatcherAccount'].Input
+        if ($typeControl.Items.Count -ne 3 -or (@($typeControl.Items | ForEach-Object Label) -join ',') -ne '人员,车,应急车') { throw '人员类型下拉选项渲染不正确。' }
+        if ($dispatcherControl.DropDownStyle -ne [Windows.Forms.ComboBoxStyle]::DropDown -or $dispatcherControl.DisplayMember -ne 'Label' -or $dispatcherControl.ValueMember -ne 'Value') { throw '调度账号搜索单选下拉渲染不正确。' }
+        $script:DispatcherLookup = $null
+        $dispatcherControl.Text = 'mhw'
+        $onTextUpdate = [Windows.Forms.ComboBox].GetMethod('OnTextUpdate',[Reflection.BindingFlags]'Instance,NonPublic')
+        [void]$onTextUpdate.Invoke($dispatcherControl,@([EventArgs]::Empty))
+        if ($null -eq $script:DispatcherLookup -or $script:DispatcherLookup.Control -ne $dispatcherControl -or $script:DispatcherLookup.Query -ne 'mhw') { throw '调度账号搜索输入事件未正确建立查询状态。' }
+        $script:DispatcherLookup = $null
+        $operationBox.SelectedItem = @($script:Operations | Where-Object Key -eq 'update')[0]
+        Rebuild-Inputs
+        $updateAccountControl = $script:FieldControls['account'].Input
+        if ($updateAccountControl.DropDownStyle -ne [Windows.Forms.ComboBoxStyle]::DropDown -or $updateAccountControl.DisplayMember -ne 'Label' -or $updateAccountControl.ValueMember -ne 'Value') { throw '更新账号信息的调度账号搜索下拉渲染不正确。' }
+        $updateAccountControl.Text = 'mhw19'
+        [void]$onTextUpdate.Invoke($updateAccountControl,@([EventArgs]::Empty))
+        if ($null -eq $script:DispatcherLookup -or $script:DispatcherLookup.Control -ne $updateAccountControl -or $script:DispatcherLookup.Query -ne 'mhw19') { throw '更新账号信息的调度账号搜索事件未正确建立查询状态。' }
+        $freeTextRejected = $false
+        try { [void](Get-FieldValue 'account') } catch { $freeTextRejected = $_.Exception.Message -eq '请从调度账号搜索下拉列表中选择一个账号。' }
+        if (-not $freeTextRejected) { throw '更新账号信息错误地接受了未选择的自由文本账号。' }
+        [void]$updateAccountControl.Items.Add([pscustomobject]@{Label='mhw19001_alias(mhw19001)';Value='mhw19001'})
+        $updateAccountControl.SelectedIndex = 0
+        if ([string](Get-FieldValue 'account') -ne 'mhw19001') { throw '更新账号信息未读取选中的精确调度账号。' }
+        $script:DispatcherLookup = $null
+        $operationBox.SelectedItem = @($script:Operations | Where-Object Key -eq 'reset')[0]
+        Rebuild-Inputs
+        $resetAccountControl = $script:FieldControls['account'].Input
+        if ($resetAccountControl.DropDownStyle -ne [Windows.Forms.ComboBoxStyle]::DropDown -or $resetAccountControl.DisplayMember -ne 'Label' -or $resetAccountControl.ValueMember -ne 'Value') { throw '重置单个账号密码的调度账号搜索下拉渲染不正确。' }
+        $resetAccountControl.Text = 'mhw20'
+        [void]$onTextUpdate.Invoke($resetAccountControl,@([EventArgs]::Empty))
+        if ($null -eq $script:DispatcherLookup -or $script:DispatcherLookup.Control -ne $resetAccountControl -or $script:DispatcherLookup.Query -ne 'mhw20') { throw '重置单个账号密码的调度账号搜索事件未正确建立查询状态。' }
+        $resetFreeTextRejected = $false
+        try { [void](Get-FieldValue 'account') } catch { $resetFreeTextRejected = $_.Exception.Message -eq '请从调度账号搜索下拉列表中选择一个账号。' }
+        if (-not $resetFreeTextRejected) { throw '重置单个账号密码错误地接受了未选择的自由文本账号。' }
+        [void]$resetAccountControl.Items.Add([pscustomobject]@{Label='mhw20001_alias(mhw20001)';Value='mhw20001'})
+        $resetAccountControl.SelectedIndex = 0
+        if ([string](Get-FieldValue 'account') -ne 'mhw20001') { throw '重置单个账号密码未读取选中的精确调度账号。' }
+        $script:DispatcherLookup = $null
+        $nodeColorModel = New-PucResultModel -OperationLabel '新增人员' -Environment '10.161.30.163' -ExecutionNodes @(
+            [pscustomobject]@{Label='人员新增预检';Status='running'},
+            [pscustomobject]@{Label='新增人员';Status='completed'},
+            [pscustomobject]@{Label='结果校验';Status='failed'}
+        ) -StartedAt ([datetime]::Now.AddSeconds(-1)) -ViewState Progress
+        Show-PucResultModel $nodeColorModel
+        $nodeItems = @($resultFields.Items | Where-Object { $_.Text -in @('1.','2.','3.') })
+        $nodeColors = @($nodeItems | ForEach-Object { $_.ForeColor.ToArgb() } | Sort-Object -Unique)
+        if ($nodeItems.Count -ne 3 -or $nodeColors.Count -ne 3) { throw '执行节点的执行中、已完成和失败状态颜色未正确区分。' }
+        $operationBox.SelectedItem = @($script:Operations | Where-Object Key -eq 'reset-query')[0]
+        Rebuild-Inputs
         $confirmationOutputs = [Collections.Generic.List[string]]::new()
         $confirmationOutputs.Add('{"status":"preview","accounts":[{"account":"mhw1"},{"account":"mhw2"}]}')
         $script:ExecutionState = [pscustomobject]@{
             Environment='10.161.30.163';Operation='reset-query';Stage='batch-reset-preview';Handle=$null;PendingConfirmation=$null
             StartedAt=[datetime]::Now.AddSeconds(-2);Outputs=$confirmationOutputs;TempPaths=[Collections.Generic.List[string]]::new();Data=@{}
+            ExecutionNodes=[Collections.Generic.List[object]]::new()
         }
         Request-PreviewConfirmation -Prompt '请查看完整账号列表，确认是否执行。' -NextStage 'batch-reset-live' -Arguments @('Test.ps1','-Live') -CancelText '用户已取消测试。'
         if ($null -eq $script:ExecutionState.PendingConfirmation) { throw '内嵌确认状态未建立。' }
@@ -1478,7 +1735,7 @@ if ($UiSelfTest) {
         if ($resultGrid.Columns['stage1Result'].HeaderText -ne '阶段 1 结果' -or $resultGrid.Columns['writesUsed'].HeaderText -ne '写入次数') { throw '结果列中文标题不正确。' }
         if ($detailsBox.Text -match 'UI-SECRET') { throw '详细输出包含未脱敏字段。' }
         if ($resultTabs.Height -lt 300 -or $resultLayout.RowStyles[1].SizeType -ne [Windows.Forms.SizeType]::Percent) { throw '执行摘要区域未使用完整可用高度。' }
-        [pscustomobject]@{status='ui-self-test-passed';tabs=$resultTabs.TabPages.Count;summaryFields=$resultFields.Items.Count;detailRows=$resultGrid.Rows.Count;resultHeight=$resultTabs.Height;environmentVersionControl='passed';versionCompatibilityWarning='passed';summaryFullHeight='passed';latestStageRows='passed';compactNumericColumns='passed';accountColumnWidth='passed';inlineConfirmation='passed';redundantGroupColumn='hidden'} | ConvertTo-Json -Compress
+        [pscustomobject]@{status='ui-self-test-passed';tabs=$resultTabs.TabPages.Count;summaryFields=$resultFields.Items.Count;detailRows=$resultGrid.Rows.Count;resultHeight=$resultTabs.Height;environmentVersionControl='passed';versionCompatibilityWarning='passed';summaryFullHeight='passed';latestStageRows='passed';compactNumericColumns='passed';accountColumnWidth='passed';inlineConfirmation='passed';uploadVisibility='passed';actionBarLayout='passed';personnelTypeDropdown='passed';dispatcherSearchDropdown='passed';dispatcherSearchEvent='passed';updateAccountSearchDropdown='passed';updateAccountSearchSelection='passed';resetAccountSearchDropdown='passed';resetAccountSearchSelection='passed';executionNodeColors='passed';redundantGroupColumn='hidden'} | ConvertTo-Json -Compress
     } finally {
         $timer.Stop();$timer.Dispose();$form.Dispose()
     }

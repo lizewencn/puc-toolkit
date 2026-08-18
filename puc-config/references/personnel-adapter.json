@@ -30,14 +30,14 @@
     },
     "searchPersonnel": {
       "method": "POST", "path": "/confs", "headers": { "Accept": "application/json, text/plain, */*" },
-      "bodyTemplate": { "cmd_name": "custom_police_info_list_req", "cmd_guid": "{{commandGuid}}", "puc_id": "{{pucId}}", "user_id": "{{username}}", "realm": "{{realm}}", "version": "10", "product_name": "PUC", "querykey": "{{query}}", "page_index": 1, "page_sizes": 100, "is_fuzzy_qry": 1, "custom_org_id": "", "mount_flag": 2, "number_type": 102 },
+      "bodyTemplate": { "cmd_name": "custom_police_info_list_req", "cmd_guid": "{{commandGuid}}", "puc_id": "{{pucId}}", "user_id": "{{username}}", "realm": "{{realm}}", "version": "10", "product_name": "PUC", "querykey": "{{query}}", "page_index": 1, "page_sizes": 100, "is_fuzzy_qry": 1, "custom_org_id": "", "mount_flag": 2, "number_type": "{{numberType}}" },
       "selectors": { "rows": "police_info_list", "alias": "police_alias", "officerId": "officer_id", "idNumber": "id_number", "mobile": "mobile" }
     },
     "createExactPersonnel": {
       "method": "POST", "path": "/confs", "headers": { "Accept": "application/json, text/plain, */*" },
       "bodyTemplate": {
         "cmd_name": "conf_add_personnel_info_req", "cmd_guid": "{{commandGuid}}", "puc_id": "{{pucId}}", "user_id": "{{username}}", "realm": "{{realm}}", "version": "10", "product_name": "PUC", "avatar_url": "", "avatar_md5sum": "",
-        "personnel_info": { "enforce_bind_dispatcher": 0, "enforce_bind_device": 0, "update_dev": 0, "number_type": 102, "officer_id": "", "tampered": 0, "police_alias": "{{alias}}", "police_type_guid": "{{policeTypeGuid}}", "dispatcher_account": "{{dispatcherAccount}}", "dispatcher_name": "{{dispatcherName}}", "device_guid_list": [], "sort_id": null }
+        "personnel_info": { "enforce_bind_dispatcher": 0, "enforce_bind_device": 0, "update_dev": 0, "number_type": "{{numberType}}", "officer_id": "", "tampered": 0, "police_alias": "{{alias}}", "police_type_guid": "{{policeTypeGuid}}", "dispatcher_account": "{{dispatcherAccount}}", "dispatcher_name": "{{dispatcherName}}", "device_guid_list": [], "sort_id": null }
       },
       "selectors": { "success": "result", "successExpected": 0 }
     },
@@ -45,7 +45,7 @@
       "method": "POST", "path": "/confs", "headers": { "Accept": "application/json, text/plain, */*" },
       "bodyTemplate": {
         "cmd_name": "conf_add_personnel_info_req", "cmd_guid": "{{commandGuid}}", "puc_id": "{{pucId}}", "user_id": "{{username}}", "realm": "{{realm}}", "version": "10", "product_name": "PUC", "avatar_url": "", "avatar_md5sum": "",
-        "personnel_info": { "enforce_bind_dispatcher": 0, "enforce_bind_device": 0, "update_dev": 0, "number_type": 102, "officer_id": "{{officerId}}", "tampered": 0, "police_alias": "{{alias}}", "police_type_guid": "{{policeTypeGuid}}", "custom_org_id": "{{organizationId}}", "custom_org_alias": "{{organizationName}}", "dispatcher_account": "{{dispatcherAccount}}", "dispatcher_name": "{{dispatcherName}}", "id_number": "{{idNumber}}", "mobile": "{{mobile}}", "device_guid_list": [], "sort_id": null }
+        "personnel_info": { "enforce_bind_dispatcher": 0, "enforce_bind_device": 0, "update_dev": 0, "number_type": "{{numberType}}", "officer_id": "{{officerId}}", "tampered": 0, "police_alias": "{{alias}}", "police_type_guid": "{{policeTypeGuid}}", "custom_org_id": "{{organizationId}}", "custom_org_alias": "{{organizationName}}", "dispatcher_account": "{{dispatcherAccount}}", "dispatcher_name": "{{dispatcherName}}", "id_number": "{{idNumber}}", "mobile": "{{mobile}}", "device_guid_list": [], "sort_id": null }
       },
       "selectors": { "success": "result", "successExpected": 0 }
     }

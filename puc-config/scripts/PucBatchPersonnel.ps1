@@ -16,6 +16,7 @@ foreach ($name in @('ipSuffix','startSequence','count','reportDirectory')) {
 if ([string]$config.ipSuffix -notmatch '^\d{1,3}$') { throw 'ipSuffix must contain one to three digits.' }
 if ([int]$config.startSequence -lt 0 -or [int]$config.startSequence -gt 999) { throw 'startSequence must be between 0 and 999.' }
 if ([int]$config.count -lt 1 -or [int]$config.count -gt 1000) { throw 'count must be between 1 and 1000.' }
+if ([int]$config.numberType -notin @(102,103,104)) { throw 'numberType must be 102 (person), 103 (vehicle), or 104 (emergency vehicle).' }
 if ([string]::IsNullOrWhiteSpace([string]$config.exactAlias) -and [string]::IsNullOrWhiteSpace([string]$config.aliasPrefix)) { throw 'Provide exactAlias or aliasPrefix.' }
 if (-not [string]::IsNullOrWhiteSpace([string]$config.exactAlias) -and [int]$config.count -ne 1) { throw 'exactAlias supports exactly one personnel record.' }
 
@@ -111,6 +112,17 @@ function Expand-Template($value, [hashtable]$variables) {
 
 $cookieJar = @{}
 $authHeader = @{}
+$script:ApiTraceSequence = 0
+function Write-ApiResponseTrace([string]$Interface, $Response) {
+    $script:ApiTraceSequence++
+    $trace = [pscustomobject]@{
+        recordType='api-response'
+        sequence=$script:ApiTraceSequence
+        interface=$Interface
+        response=(ConvertTo-PucDisplayValue -Value $Response)
+    } | ConvertTo-Json -Depth 100 -Compress
+    Write-Host $trace
+}
 function Invoke-Operation([string]$name, [hashtable]$variables) {
     $operation = $adapter.operations.$name
     if ($null -eq $operation) { throw "Adapter operation is missing: $name" }
@@ -121,7 +133,13 @@ function Invoke-Operation([string]$name, [hashtable]$variables) {
     $maxRetries = if ($name -in @('createPersonnel','createExactPersonnel')) { 0 } elseif ($null -ne $config.maxReadRetries) { [int]$config.maxReadRetries } else { 0 }
     for ($attempt = 0; ; $attempt++) {
         try {
-            return Invoke-PucJsonHttpRequest -Method ([string]$operation.method) -Uri ([uri]($config.baseUrl.TrimEnd('/') + $operation.path)) -Headers $headers -Body $body -AllowInsecureTls ([bool]$config.allowInsecureTls) -TimeoutSec 60 -CookieJar $cookieJar -Depth 50
+            $response = Invoke-PucJsonHttpRequest -Method ([string]$operation.method) -Uri ([uri]($config.baseUrl.TrimEnd('/') + $operation.path)) -Headers $headers -Body $body -AllowInsecureTls ([bool]$config.allowInsecureTls) -TimeoutSec 60 -CookieJar $cookieJar -Depth 50
+            Write-ApiResponseTrace -Interface ([string]$operation.bodyTemplate.cmd_name) -Response $response
+            if ($null -eq $response) { throw "$name returned an empty response. No retry was attempted." }
+            $resultProperty = $response.PSObject.Properties['result']
+            if ($null -eq $resultProperty) { throw "$name returned a response without result. No retry was attempted." }
+            if ([string]$resultProperty.Value -ne '0') { throw (New-PucApiFailureMessage -Operation $name -Response $response) }
+            return $response
         } catch {
             if ($attempt -ge $maxRetries) {
                 throw
@@ -195,7 +213,7 @@ function Find-Duplicate($person) {
     foreach ($field in @('alias','officerId','idNumber','mobile')) {
         $value = [string]$person.$field
         if ([string]::IsNullOrWhiteSpace($value)) { continue }
-        $response = Invoke-Operation 'searchPersonnel' @{ username=$adminUser; realm=$config.realm; pucId=$config.pucId; query=$value; commandGuid=[guid]::NewGuid().ToString() }
+        $response = Invoke-Operation 'searchPersonnel' @{ username=$adminUser; realm=$config.realm; pucId=$config.pucId; query=$value; commandGuid=[guid]::NewGuid().ToString(); numberType=[int]$config.numberType }
         $rows = @(Get-PropertyPath $response $adapter.operations.searchPersonnel.selectors.rows)
         $selector = [string]$adapter.operations.searchPersonnel.selectors.$field
         if (@($rows | Where-Object { [string](Get-PropertyPath $_ $selector) -eq $value }).Count -gt 0) { return $field }
@@ -226,7 +244,7 @@ while ($created -lt [int]$config.count) {
     } elseif ($PSCmdlet.ShouldProcess($person.alias, 'Create PUC personnel')) {
         try {
             $createOperation = if (-not [string]::IsNullOrWhiteSpace([string]$config.exactAlias)) { 'createExactPersonnel' } else { 'createPersonnel' }
-            $response = Invoke-Operation $createOperation @{ username=$adminUser; realm=$config.realm; pucId=$config.pucId; commandGuid=[guid]::NewGuid().ToString(); officerId=$person.officerId; alias=$person.alias; policeTypeGuid=$config.policeTypeGuid; organizationId=$organizationId; organizationName=$organizationName; idNumber=$person.idNumber; mobile=$person.mobile; dispatcherAccount=$dispatcherAccountValue; dispatcherName=$dispatcherNameValue }
+            $response = Invoke-Operation $createOperation @{ username=$adminUser; realm=$config.realm; pucId=$config.pucId; commandGuid=[guid]::NewGuid().ToString(); numberType=[int]$config.numberType; officerId=$person.officerId; alias=$person.alias; policeTypeGuid=$config.policeTypeGuid; organizationId=$organizationId; organizationName=$organizationName; idNumber=$person.idNumber; mobile=$person.mobile; dispatcherAccount=$dispatcherAccountValue; dispatcherName=$dispatcherNameValue }
             if ([string](Get-PropertyPath $response $adapter.operations.$createOperation.selectors.success) -ne [string]$adapter.operations.$createOperation.selectors.successExpected) { throw (New-PucApiFailureMessage -Operation $createOperation -Response $response) }
             $results.Add([pscustomobject]@{ sequence=$sequence; alias=$person.alias; dispatcherAccount=$dispatcherAccountValue; officerId=$person.officerId; idNumber=$person.idNumber; mobile=$person.mobile; status='created'; reason='' })
             $created++

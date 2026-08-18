@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('Module','Transport','LoginContext','AuthLifecycle','AccountsFile','SinglePasswordReset','LiveFlow','AccountCreation','AccountCompletion','All')][string]$Case = 'All',
+    [ValidateSet('Module','Transport','LoginContext','AuthLifecycle','RuntimeCompatibility','AccountsFile','SinglePasswordReset','LiveFlow','AccountCreation','AccountCompletion','All')][string]$Case = 'All',
     [int]$ExternalServerPort
 )
 
@@ -58,6 +58,10 @@ function Test-Module {
         Assert-True (Test-PucSavedTokenRejected -Response ([pscustomobject]@{result='51800032'})) 'String invalid-token result was not recognized'
         Assert-True (-not (Test-PucSavedTokenRejected -Response ([pscustomobject]@{result=42;msg='business failure'}))) 'Unrelated business failure was treated as token rejection'
         Assert-True (-not (Test-PucSavedTokenRejected -Response ([pscustomobject]@{result=0}))) 'Successful response was treated as token rejection'
+        $legacyRuntime=[pscustomobject]@{name='fake'}
+        Assert-True ($null -eq (Get-PucPropertyPath -Object $legacyRuntime -Path 'pendingLogin')) 'Missing legacy runtime property did not resolve to null'
+        $currentRuntime=[ordered]@{name='fake';pendingLogin=[ordered]@{sessionId='abc'}}
+        Assert-Equal (Get-PucPropertyPath -Object $currentRuntime -Path 'pendingLogin.sessionId') 'abc' 'Dictionary runtime property path'
     } finally { Remove-Item -LiteralPath $dir -Recurse -Force }
 }
 function Test-Transport {
@@ -149,7 +153,20 @@ function Test-AuthLifecycle {
         $normalized=Get-PucEnvironment -ConfigRoot $dir -Name 'fake'
         Assert-Equal $normalized.token '' 'Missing token changed unexpectedly'
         Assert-Equal $normalized.pucId '' 'Stale PUC ID was not cleared with missing token'
+
     } finally { Stop-FakeServer $server;Remove-Item -LiteralPath $dir -Recurse -Force }
+}
+function Test-RuntimeCompatibility {
+    Import-Module $modulePath -Force
+    $dir=New-TempDirectory
+    try {
+        $environmentName='127.0.0.1'
+        $config=[ordered]@{version=1;environments=@([ordered]@{name=$environmentName;baseUrl='http://127.0.0.1:1';realm='puc.com';adminAccount='admin';adminPassword='';newAccountPassword='';token='';pucId='';allowInsecureTls=$false})}
+        Write-PucJson -Path (Join-Path $dir 'config.json') -Value $config
+        Write-PucJson -Path (Join-Path $dir 'runtime.json') -Value ([ordered]@{version=1;environments=@([ordered]@{name=$environmentName})})
+        $command=Join-Path $skillRoot 'scripts\Invoke-PucAuth.ps1'
+        Assert-Throws { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $command -Action Login -Environment $environmentName -CaptchaValue unused -ConfigRoot $dir 2>&1 } 'No pending same-process login exists'
+    } finally { Remove-Item -LiteralPath $dir -Recurse -Force }
 }
 function Test-AccountsFile {
     $dir=New-TempDirectory
@@ -247,6 +264,6 @@ function Test-AccountCompletion {
 }
 
 try {
-    $cases=if($Case-eq'All'){@('Module','Transport','LoginContext','AuthLifecycle','AccountsFile','SinglePasswordReset','LiveFlow','AccountCreation','AccountCompletion')}else{@($Case)}
+    $cases=if($Case-eq'All'){@('Module','Transport','LoginContext','AuthLifecycle','RuntimeCompatibility','AccountsFile','SinglePasswordReset','LiveFlow','AccountCreation','AccountCompletion')}else{@($Case)}
     foreach($name in $cases){& "Test-$name";Write-Output "PASS $name"}
 } finally { $env:PUC_NODE_EXE=$oldNode }

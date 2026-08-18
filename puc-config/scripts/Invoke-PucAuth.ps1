@@ -19,9 +19,7 @@ function Invoke-JsonRequest($Body, [hashtable]$Headers) {
 }
 
 function New-RuntimeEntry($PendingLogin) {
-    $entry = [ordered]@{ name=$Environment }
-    if ($null -ne $PendingLogin) { $entry.pendingLogin=$PendingLogin }
-    return $entry
+    return [ordered]@{ name=$Environment; pendingLogin=$PendingLogin }
 }
 
 function Set-EnvironmentAuth([string]$Token,[string]$PucId) {
@@ -135,15 +133,17 @@ try {
     }
 
     $runtime = Get-PucRuntimeEntry -ConfigRoot $root -Name $Environment
+    $pendingLogin = Get-PucPropertyPath -Object $runtime -Path 'pendingLogin'
     if ($Action -in @('InteractiveLogin','Captcha')) {
         [void](Test-PucConfigWriteAccess -ConfigRoot $root)
         [void](Resolve-PucNodeExecutable)
         if ($Action -eq 'InteractiveLogin' -and -not [Environment]::UserInteractive) {
             throw 'Interactive login requires a visible desktop session. Run this command with desktop/GUI permission.'
         }
-        if ($null -ne $runtime -and $null -ne $runtime.pendingLogin) {
-            $oldSessionId = [string]$runtime.pendingLogin.sessionId
-            $oldProcess = Get-Process -Id ([int]$runtime.pendingLogin.processId) -ErrorAction SilentlyContinue
+        if ($null -ne $pendingLogin) {
+            $oldSessionId = [string](Get-PucPropertyPath -Object $pendingLogin -Path 'sessionId')
+            $oldProcessId = [int](Get-PucPropertyPath -Object $pendingLogin -Path 'processId')
+            $oldProcess = Get-Process -Id $oldProcessId -ErrorAction SilentlyContinue
             if ($null -ne $oldProcess -and -not $oldProcess.HasExited) {
                 throw "A login worker is already waiting for captcha input for environment '$Environment'."
             }
@@ -209,15 +209,16 @@ try {
     }
 
     if ([string]::IsNullOrWhiteSpace($CaptchaValue)) { throw 'CaptchaValue is required for login.' }
-    if ($null -eq $runtime -or $null -eq $runtime.pendingLogin) { throw 'No pending same-process login exists. Fetch a fresh captcha first.' }
-    $sessionId = [string]$runtime.pendingLogin.sessionId
+    if ($null -eq $pendingLogin) { throw 'No pending same-process login exists. Fetch a fresh captcha first.' }
+    $sessionId = [string](Get-PucPropertyPath -Object $pendingLogin -Path 'sessionId')
     $paths = Get-SessionPaths $sessionId
     if (Test-Path -LiteralPath $paths.Result) {
         $earlyResult = Get-Content -Raw -LiteralPath $paths.Result | ConvertFrom-Json
         Clear-PendingLogin $sessionId
         throw "Login worker is no longer waiting: $([string]$earlyResult.detail)"
     }
-    $process = Get-Process -Id ([int]$runtime.pendingLogin.processId) -ErrorAction SilentlyContinue
+    $processId = [int](Get-PucPropertyPath -Object $pendingLogin -Path 'processId')
+    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
     if ($null -eq $process -or $process.HasExited) {
         Clear-PendingLogin $sessionId
         throw 'The same-process login worker is no longer running. Fetch a fresh captcha before another explicit attempt.'

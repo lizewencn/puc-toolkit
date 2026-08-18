@@ -6,6 +6,8 @@ Use `scripts/Invoke-PucAccountUpdate.ps1`. This workflow follows the account edi
 
 Resolve one exact environment and dispatcher account. Require changes as either a JSON object in `-ChangesJson` or a `.json` file in `-ChangesPath`; use exactly one source.
 
+In the graphical launcher, resolve the dispatcher account through the shared asynchronous server-side fuzzy-search dropdown backed by `account_list_request`. Require one selected returned account and reject free-form text before starting the plan stage; the workflow itself still re-queries and validates that exact account.
+
 Run an offline validation first:
 
 ```powershell

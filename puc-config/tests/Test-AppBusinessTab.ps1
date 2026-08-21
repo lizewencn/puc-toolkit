@@ -20,6 +20,10 @@ if ($summary.appFollowEnvironment -ne 'passed') { throw 'APP follow-environment 
 if ($summary.appManualSelectionPreserved -ne 'passed') { throw 'Manual APP environment selection was not preserved.' }
 if ($summary.sharedAddEnvironmentHandler -ne 'passed') { throw 'Environment buttons did not use the shared add handler.' }
 if ($summary.configBoundsAfterShow -ne 'passed') { throw 'PUC controls were not checked after showing the form.' }
-if ($summary.appLoginOfflineDisabled -ne 'passed') { throw 'APP login action must be disabled in the shell.' }
+if ($summary.appLoginControls -ne 'passed') { throw 'APP login controls were not initialized.' }
+if ($summary.appLoginLifecycle -ne 'passed') { throw 'APP login lifecycle states were not mapped.' }
+if ($summary.appSessionDisplay -ne 'passed') { throw 'APP account and app_puc_id were not displayed.' }
+if ($summary.appBridgeCleanup -ne 'passed') { throw 'APP bridge cleanup was not initialized.' }
 if ($summary.appBatchOfflineDisabled -ne 'passed') { throw 'APP batch action must be disabled while offline.' }
+if ($summary.appBatchOnlineEnabled -ne 'passed') { throw 'APP batch action must be enabled only after login success.' }
 Write-Output 'PASS AppBusinessTab'

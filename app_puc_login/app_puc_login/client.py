@@ -209,6 +209,11 @@ class PucLoginClient:
             frame = decode_frame(raw)
             if frame.message_type is MessageType.HEARTBEAT:
                 transport.send_frame(encode_frame(b"", MessageType.HEARTBEAT_ACK))
+                self._emit(
+                    EventType.HEARTBEAT,
+                    LoginPhase.WEBSOCKET,
+                    message="heartbeat acknowledged",
+                )
                 continue
             if frame.message_type is not MessageType.AUTH_ACK:
                 continue
@@ -255,6 +260,11 @@ class PucLoginClient:
             frame = decode_frame(raw)
             if frame.message_type is MessageType.HEARTBEAT:
                 transport.send_frame(encode_frame(b"", MessageType.HEARTBEAT_ACK))
+                self._emit(
+                    EventType.HEARTBEAT,
+                    LoginPhase.ONLINE,
+                    message="heartbeat acknowledged",
+                )
                 continue
             body_text = frame.body.decode("utf-8")
             try:

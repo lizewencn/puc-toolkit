@@ -9,6 +9,7 @@ from typing import Any
 
 
 class EventType(str, Enum):
+    HEARTBEAT = "heartbeat"
     CONNECTING = "connecting"
     TOKEN_ACQUIRED = "token_acquired"
     WEBSOCKET_CONNECTED = "websocket_connected"

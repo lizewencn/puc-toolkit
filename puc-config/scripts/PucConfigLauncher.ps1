@@ -603,6 +603,7 @@ $script:PendingVersionEnvironment = ''
 $script:LastUpgradePackagePath = ''
 $script:DispatcherLookup = $null
 $script:UploadButtonRequestedVisible = $false
+$script:AppBusinessController = $null
 
 function Get-EnvironmentEntries {
     $root = Get-PucConfigRoot
@@ -1165,6 +1166,101 @@ $detailsBox.WordWrap = $false
 $detailsBox.DetectUrls = $false
 $detailsTab.Controls.Add($detailsBox)
 
+$tabEnabled = @{'puc-config'=$true;'app-business'=$true}
+$tabsConfigPath = Join-Path $PSScriptRoot 'tabs\tabs.json'
+if (Test-Path -LiteralPath $tabsConfigPath -PathType Leaf) {
+    try {
+        $tabsDocument = Get-Content -LiteralPath $tabsConfigPath -Raw | ConvertFrom-Json
+        foreach ($entry in @($tabsDocument.tabs)) {
+            $key = [string]$entry.key
+            if ($tabEnabled.ContainsKey($key)) { $tabEnabled[$key] = [bool]$entry.enabled }
+        }
+    } catch {
+        $tabEnabled = @{'puc-config'=$true;'app-business'=$true}
+    }
+}
+
+$mainTabs = New-Object Windows.Forms.TabControl
+$mainTabs.Dock = [Windows.Forms.DockStyle]::Fill
+$mainTabs.Padding = New-Object Drawing.Point(14,5)
+$mainTabs.BackColor = [Drawing.Color]::FromArgb(246,248,250)
+$configTab = New-Object Windows.Forms.TabPage
+$configTab.Text = 'PUC 配置'
+$configTab.BackColor = [Drawing.Color]::FromArgb(246,248,250)
+$configSurface = New-Object Windows.Forms.Panel
+$configSurface.Dock = [Windows.Forms.DockStyle]::Fill
+$configSurface.BackColor = [Drawing.Color]::FromArgb(246,248,250)
+$configTab.Controls.Add($configSurface)
+
+$sourceClientSize = $form.ClientSize
+$existingControlStates = @($form.Controls | ForEach-Object {
+    [pscustomobject]@{Control=$_;Anchor=$_.Anchor}
+})
+foreach ($state in $existingControlStates) { $state.Control.Anchor = 'Top,Left' }
+$form.SuspendLayout()
+$form.Controls.Clear()
+$form.Controls.Add($mainTabs)
+$form.ResumeLayout($true)
+$form.PerformLayout()
+$mainTabs.PerformLayout()
+$configTab.PerformLayout()
+$targetClientSize = $configSurface.ClientSize
+$widthDelta = $targetClientSize.Width - $sourceClientSize.Width
+$heightDelta = $targetClientSize.Height - $sourceClientSize.Height
+foreach ($state in $existingControlStates) {
+    $control = $state.Control
+    $configSurface.Controls.Add($control)
+    if (($state.Anchor -band [Windows.Forms.AnchorStyles]::Right) -ne 0) {
+        $control.Width = [Math]::Max(1,$control.Width + $widthDelta)
+    }
+    if (($state.Anchor -band [Windows.Forms.AnchorStyles]::Bottom) -ne 0) {
+        $control.Height = [Math]::Max(1,$control.Height + $heightDelta)
+    }
+    $control.Anchor = $state.Anchor
+}
+
+if ($tabEnabled['puc-config']) { [void]$mainTabs.TabPages.Add($configTab) }
+if ($tabEnabled['app-business']) {
+    try {
+        $tabRegistry = @{
+            'app-business' = Join-Path $PSScriptRoot 'tabs\AppBusinessTab.ps1'
+        }
+        $appModulePath = $tabRegistry['app-business']
+        if (-not (Test-Path -LiteralPath $appModulePath -PathType Leaf)) { throw "APP 业务页模块不存在：$appModulePath" }
+        . $appModulePath
+        $appContext = @{
+            Form=$form
+            ScriptRoot=$PSScriptRoot
+            GetEnvironments={ @(Get-EnvironmentEntries) }
+            AddEnvironment={
+                if (-not $mainTabs.TabPages.Contains($configTab)) { throw 'PUC 配置页未启用，无法新增环境。' }
+                $beforeNames = @((Get-EnvironmentEntries) | ForEach-Object { [string]$_.Name })
+                $previousTab = $mainTabs.SelectedTab
+                $mainTabs.SelectedTab = $configTab
+                $addEnvironmentButton.PerformClick()
+                $addedName = @((Get-EnvironmentEntries) | Where-Object { [string]$_.Name -notin $beforeNames } | ForEach-Object { [string]$_.Name } | Select-Object -First 1)
+                if ($null -ne $previousTab -and $mainTabs.TabPages.Contains($previousTab)) { $mainTabs.SelectedTab = $previousTab }
+                if ($addedName.Count -eq 1) { return $addedName[0] }
+                return ''
+            }
+        }
+        $script:AppBusinessController = New-PucAppBusinessTab -Context $appContext
+        [void]$mainTabs.TabPages.Add($script:AppBusinessController.TabPage)
+    } catch {
+        $failedAppTab = New-Object Windows.Forms.TabPage
+        $failedAppTab.Text = 'APP 业务'
+        $failedAppTab.BackColor = [Drawing.Color]::FromArgb(246,248,250)
+        $failedAppLabel = New-Object Windows.Forms.Label
+        $failedAppLabel.Dock = [Windows.Forms.DockStyle]::Fill
+        $failedAppLabel.TextAlign = [Drawing.ContentAlignment]::MiddleCenter
+        $failedAppLabel.ForeColor = [Drawing.Color]::FromArgb(184,70,45)
+        $failedAppLabel.Text = "APP 业务页加载失败：$($_.Exception.Message)"
+        $failedAppTab.Controls.Add($failedAppLabel)
+        [void]$mainTabs.TabPages.Add($failedAppTab)
+    }
+}
+if ($mainTabs.TabPages.Count -eq 0) { [void]$mainTabs.TabPages.Add($configTab) }
+
 function Resize-FormForFields([int]$InputHeight) {
     $inputPanel.Height = $InputHeight
     $actionY = 184 + $InputHeight
@@ -1176,7 +1272,8 @@ function Resize-FormForFields([int]$InputHeight) {
     $availableResultHeight = $maxClientHeight - $resultTop - 20
     $resultHeight = [Math]::Max(244,[Math]::Min(340,$availableResultHeight))
     $targetWidth = [Math]::Max(760,$form.ClientSize.Width)
-    $form.ClientSize = New-Object Drawing.Size($targetWidth,($resultTop + $resultHeight + 20))
+    $tabChromeHeight = [Math]::Max(0,$mainTabs.ClientSize.Height - $mainTabs.DisplayRectangle.Height)
+    $form.ClientSize = New-Object Drawing.Size($targetWidth,($resultTop + $resultHeight + 20 + $tabChromeHeight))
     $resultTabs.Top = $resultTop
     $resultTabs.Height = $resultHeight
 }
@@ -1663,6 +1760,12 @@ function Load-Environments([string]$PreferredName = '') {
     }
     $environmentBox.SelectedIndex = $selectedIndex
     Update-EnvironmentAddress
+    if ($null -ne $script:AppBusinessController) {
+        try {
+            $appPreferredName = if ($null -ne $environmentBox.SelectedItem) { [string]$environmentBox.SelectedItem.Name } else { '' }
+            [void]$script:AppBusinessController.Refresh.Invoke($appPreferredName)
+        } catch {}
+    }
 }
 
 function Show-NewEnvironmentDialog {
@@ -2120,7 +2223,7 @@ $operationBox.Add_SelectedIndexChanged({Rebuild-Inputs})
 $environmentBox.Add_SelectedIndexChanged({Update-EnvironmentAddress})
 $actionPanel.Add_SizeChanged({Update-ActionPanelLayout})
 function Sync-ContainerWidths {
-    $containerWidth = [Math]::Max(760,$form.ClientSize.Width)
+    $containerWidth = [Math]::Max(760,$configSurface.ClientSize.Width)
     $header.Width = $containerWidth
     $accent.Width = $containerWidth
     $selectionPanel.Width = $containerWidth
@@ -2241,7 +2344,9 @@ $form.Add_FormClosing({
     if($null -ne $script:ExecutionState){
         $eventArgs.Cancel=$true
         [Windows.Forms.MessageBox]::Show($form,'PUC 操作仍在运行，请等待完成后再关闭。','PUC Toolkit','OK','Information')|Out-Null
+        return
     }
+    if($null -ne $script:AppBusinessController){try{[void]$script:AppBusinessController.Dispose.Invoke()}catch{}}
 })
 
 if ($UiSelfTest) {
@@ -2441,6 +2546,7 @@ if ($UiSelfTest) {
         if ([PucTaskbarIdentity]::GetProcessIdentity() -ne $script:PucAppUserModelId -or [PucTaskbarIdentity]::GetWindowProperty($form.Handle,5) -ne $script:PucAppUserModelId -or [PucTaskbarIdentity]::GetWindowProperty($form.Handle,3) -ne $taskbarIconResource) { throw '任务栏未绑定 PUC Toolkit 的独立应用标识和图标资源。' }
         [pscustomobject]@{status='ui-self-test-passed';tabs=$resultTabs.TabPages.Count;summaryFields=$resultFields.Items.Count;detailRows=$resultGrid.Rows.Count;resultHeight=$resultTabs.Height;environmentVersionControl='passed';versionCompatibilityWarning='passed';summaryFullHeight='passed';resultContainerWidth='passed';windowIcon='passed';taskbarIdentity='passed';inputPanelRedraw='passed';responsiveInputColumns='passed';latestStageRows='passed';compactNumericColumns='passed';accountColumnWidth='passed';inlineConfirmation='passed';uploadVisibility='passed';actionBarLayout='passed';createPrefixDefault='empty';createCountDefault=1;personnelTypeDropdown='passed';dispatcherSearchDropdown='passed';dispatcherSearchEvent='passed';dispatcherSearchStatus='passed';updateAccountSearchDropdown='passed';updateAccountSearchSelection='passed';resetAccountSearchDropdown='passed';resetAccountSearchSelection='passed';executionNodeColors='passed';redundantGroupColumn='hidden'} | ConvertTo-Json -Compress
     } finally {
+        if ($null -ne $script:AppBusinessController) { try { [void]$script:AppBusinessController.Dispose.Invoke() } catch {} }
         $timer.Stop();$timer.Dispose();$form.Dispose()
         if ($null -ne $launcherIcon) { $launcherIcon.Dispose() }
     }
@@ -2476,6 +2582,7 @@ try{
 }catch{
     [Windows.Forms.MessageBox]::Show($_.Exception.Message,'PUC Toolkit','OK','Error')|Out-Null
 }finally{
+    if ($null -ne $script:AppBusinessController) { try { [void]$script:AppBusinessController.Dispose.Invoke() } catch {} }
     $timer.Stop();$timer.Dispose();$form.Dispose()
     if ($null -ne $launcherIcon) { $launcherIcon.Dispose() }
 }

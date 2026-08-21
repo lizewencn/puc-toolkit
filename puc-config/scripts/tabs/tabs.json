@@ -1,0 +1,12 @@
+{
+  "tabs": [
+    {
+      "key": "puc-config",
+      "enabled": true
+    },
+    {
+      "key": "app-business",
+      "enabled": true
+    }
+  ]
+}

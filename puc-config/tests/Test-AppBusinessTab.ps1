@@ -16,6 +16,7 @@ if ($summary.configTabText -ne $expectedConfigTab -or $summary.appTabText -ne $e
 if ($summary.appEnvironmentControl -ne 'passed') { throw 'APP environment control was not initialized.' }
 if ($summary.appEnvironmentLoad -ne 'passed') { throw 'Shared environment loading was not exercised.' }
 if ($summary.appServerAddressControl -ne 'passed') { throw 'APP server address control was not initialized.' }
+if ($summary.appServerPort -ne 'passed') { throw 'APP followed environment address did not use port 16663.' }
 if ($summary.appFollowEnvironment -ne 'passed') { throw 'APP follow-environment behavior was not initialized.' }
 if ($summary.appManualSelectionPreserved -ne 'passed') { throw 'Manual APP environment selection was not preserved.' }
 if ($summary.sharedAddEnvironmentHandler -ne 'passed') { throw 'Environment buttons did not use the shared add handler.' }

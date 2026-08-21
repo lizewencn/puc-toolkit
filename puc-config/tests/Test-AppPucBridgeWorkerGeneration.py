@@ -22,6 +22,17 @@ class ErrorService:
         raise RuntimeError("worker failed")
 
 
+def read_first_command(input_text):
+    bridge = AppPucBridge()
+    original_stdin = sys.stdin
+    try:
+        sys.stdin = io.StringIO(input_text)
+        bridge._read_commands()
+    finally:
+        sys.stdin = original_stdin
+    return bridge._commands.get_nowait()
+
+
 def drain(service, generation):
     bridge = AppPucBridge()
     bridge.batch_service = service
@@ -39,5 +50,8 @@ assert success[1]["data"]["state"] == "completed", success
 
 error = drain(ErrorService(), 32)
 assert len(error) == 1 and error[0]["generation"] == 32 and not error[0]["ok"], error
+
+bom_command = read_first_command('\ufeff{"command":"status"}\n')
+assert bom_command == {"command": "status"}, bom_command
 
 print("PASS AppPucBridgeWorkerGeneration")

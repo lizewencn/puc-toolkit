@@ -96,7 +96,7 @@ class AppPucBridge:
     def _read_commands(self) -> None:
         try:
             for line in sys.stdin:
-                line = line.strip()
+                line = line.strip().lstrip("\ufeff")
                 if not line:
                     continue
                 try:
@@ -292,4 +292,6 @@ class AppPucBridge:
 
 
 if __name__ == "__main__":
+    if hasattr(sys.stdin, "reconfigure"):
+        sys.stdin.reconfigure(encoding="utf-8-sig")
     AppPucBridge().run()

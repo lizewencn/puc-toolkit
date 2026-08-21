@@ -5,7 +5,7 @@
         [hashtable]$Context
     )
 
-    foreach ($requiredKey in @('Form','ScriptRoot','GetEnvironments','AddEnvironment')) {
+    foreach ($requiredKey in @('Form','ScriptRoot','GetConfigRoot','GetEnvironments','AddEnvironment','WriteLog')) {
         if (-not $Context.ContainsKey($requiredKey) -or $null -eq $Context[$requiredKey]) {
             throw "APP 业务页缺少上下文：$requiredKey"
         }
@@ -241,6 +241,7 @@
 
     $addMemberButton = New-Object Windows.Forms.Button
     $addMemberButton.Text = '添加成员'
+    $addMemberButton.AccessibleName = 'Select dispatchers'
     $addMemberButton.AutoSize = $true
     $addMemberButton.Margin = New-Object Windows.Forms.Padding(0,2,6,2)
     & $styleButton $addMemberButton $false
@@ -323,6 +324,7 @@
         BridgeErrorText=[Text.StringBuilder]::new()
         LoginActive=$false
         LoginOnline=$false
+        LastLoginError=''
         LoginGeneration=0
         BatchRunning=$false
         BatchGeneration=0
@@ -339,6 +341,8 @@
         ReceiveMessageAction=$null
         StartBatchAction=$null
         StartLoginAction=$null
+        AddMembersAction=$null
+        ShowMemberPickerAction=$null
     }
 
     $getValue = {
@@ -348,6 +352,174 @@
         if ($null -eq $property) { return $null }
         return $property.Value
     }.GetNewClosure()
+
+    $addMembers = {
+        param($Members, [Parameter(ValueFromRemainingArguments)]$RemainingMembers)
+        $selectedMembers = @($Members) + @($RemainingMembers)
+        $existing = @{}
+        foreach ($row in @($memberGrid.Rows)) {
+            if ($row.IsNewRow) { continue }
+            $account = ([string]$row.Cells['account'].Value).Trim()
+            if (-not [string]::IsNullOrWhiteSpace($account)) { $existing[$account.ToLowerInvariant()] = $true }
+        }
+        foreach ($member in $selectedMembers) {
+            $account = ([string](& $getValue $member 'account')).Trim()
+            $appPucId = ([string](& $getValue $member 'appPucId')).Trim()
+            if ([string]::IsNullOrWhiteSpace($account) -or [string]::IsNullOrWhiteSpace($appPucId)) { continue }
+            $key = $account.ToLowerInvariant()
+            if ($existing.ContainsKey($key)) { continue }
+            $emptyRow = @($memberGrid.Rows | Where-Object {
+                -not $_.IsNewRow -and [string]::IsNullOrWhiteSpace([string]$_.Cells['account'].Value) -and
+                [string]::IsNullOrWhiteSpace([string]$_.Cells['app_puc_id'].Value)
+            } | Select-Object -First 1)
+            if ($emptyRow.Count -eq 1) {
+                $emptyRow[0].Cells['account'].Value = $account
+                $emptyRow[0].Cells['app_puc_id'].Value = $appPucId
+            } else {
+                [void]$memberGrid.Rows.Add($account,$appPucId)
+            }
+            $existing[$key] = $true
+        }
+    }.GetNewClosure()
+    $state.AddMembersAction = $addMembers
+
+    $resolveConfigRoot = {
+        $configRoot = [string](& $Context.GetConfigRoot)
+        if ([string]::IsNullOrWhiteSpace($configRoot)) { throw 'PUC 配置路径为空，请先设置配置路径。' }
+        return $configRoot
+    }.GetNewClosure()
+
+    $reportSearchError = {
+        param([string]$Message)
+        if ([string]::IsNullOrWhiteSpace($Message)) { $Message = '未知搜索错误' }
+        & $Context['WriteLog'] 'APP业务' "[member-search-error] $Message"
+    }.GetNewClosure()
+
+    $showMemberPicker = {
+        if ($null -eq $environmentBox.SelectedItem) { throw '请先选择服务器环境。' }
+        $environmentName = [string]$environmentBox.SelectedItem.Name
+        $configRoot = & $resolveConfigRoot
+        $dialog = New-Object Windows.Forms.Form
+        $dialog.Text = '选择调度员'
+        $dialog.StartPosition = [Windows.Forms.FormStartPosition]::CenterParent
+        $dialog.Size = New-Object Drawing.Size(720,520)
+        $dialog.MinimumSize = New-Object Drawing.Size(620,420)
+        $dialog.ShowInTaskbar = $false
+
+        $pickerLayout = New-Object Windows.Forms.TableLayoutPanel
+        $pickerLayout.Dock = [Windows.Forms.DockStyle]::Fill
+        $pickerLayout.Padding = New-Object Windows.Forms.Padding(12)
+        $pickerLayout.ColumnCount = 1
+        $pickerLayout.RowCount = 3
+        [void]$pickerLayout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute,42)))
+        [void]$pickerLayout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Percent,100)))
+        [void]$pickerLayout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute,44)))
+        $dialog.Controls.Add($pickerLayout)
+
+        $searchPanel = New-Object Windows.Forms.TableLayoutPanel
+        $searchPanel.Dock = [Windows.Forms.DockStyle]::Fill
+        $searchPanel.ColumnCount = 3
+        [void]$searchPanel.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Percent,100)))
+        [void]$searchPanel.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute,88)))
+        [void]$searchPanel.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute,150)))
+        $queryBox = New-Object Windows.Forms.TextBox
+        $queryBox.Dock = [Windows.Forms.DockStyle]::Fill
+        $queryBox.Margin = New-Object Windows.Forms.Padding(0,5,8,5)
+        $searchPanel.Controls.Add($queryBox,0,0)
+        $searchButton = New-Object Windows.Forms.Button
+        $searchButton.Text = '搜索'
+        $searchButton.Dock = [Windows.Forms.DockStyle]::Fill
+        $searchButton.Margin = New-Object Windows.Forms.Padding(0,2,8,2)
+        & $styleButton $searchButton $false
+        $searchPanel.Controls.Add($searchButton,1,0)
+        $searchStatus = New-Object Windows.Forms.Label
+        $searchStatus.Text = '输入账号或名称搜索'
+        $searchStatus.AutoEllipsis = $true
+        $searchStatus.Dock = [Windows.Forms.DockStyle]::Fill
+        $searchStatus.TextAlign = [Drawing.ContentAlignment]::MiddleLeft
+        $searchPanel.Controls.Add($searchStatus,2,0)
+        $pickerLayout.Controls.Add($searchPanel,0,0)
+
+        $pickerGrid = New-Object Windows.Forms.DataGridView
+        $pickerGrid.Dock = [Windows.Forms.DockStyle]::Fill
+        $pickerGrid.AllowUserToAddRows = $false
+        $pickerGrid.AllowUserToDeleteRows = $false
+        $pickerGrid.RowHeadersVisible = $false
+        $pickerGrid.SelectionMode = [Windows.Forms.DataGridViewSelectionMode]::FullRowSelect
+        $pickerGrid.MultiSelect = $true
+        $pickerGrid.AutoSizeColumnsMode = [Windows.Forms.DataGridViewAutoSizeColumnsMode]::Fill
+        $checkColumn = New-Object Windows.Forms.DataGridViewCheckBoxColumn
+        $checkColumn.Name = 'selected'; $checkColumn.HeaderText = '选择'; $checkColumn.Width = 52
+        $checkColumn.AutoSizeMode = [Windows.Forms.DataGridViewAutoSizeColumnMode]::None
+        [void]$pickerGrid.Columns.Add($checkColumn)
+        [void]$pickerGrid.Columns.Add('name','名称')
+        [void]$pickerGrid.Columns.Add('account','调度账号')
+        [void]$pickerGrid.Columns.Add('app_puc_id','APP PUC ID')
+        $pickerGrid.Columns['app_puc_id'].Width = 110
+        $pickerLayout.Controls.Add($pickerGrid,0,1)
+
+        $buttonPanel = New-Object Windows.Forms.FlowLayoutPanel
+        $buttonPanel.Dock = [Windows.Forms.DockStyle]::Fill
+        $buttonPanel.FlowDirection = [Windows.Forms.FlowDirection]::RightToLeft
+        $confirmButton = New-Object Windows.Forms.Button
+        $confirmButton.Text = '添加所选'; $confirmButton.Width = 96; $confirmButton.Height = 34
+        & $styleButton $confirmButton $true
+        $cancelButton = New-Object Windows.Forms.Button
+        $cancelButton.Text = '取消'; $cancelButton.Width = 88; $cancelButton.Height = 34
+        $cancelButton.DialogResult = [Windows.Forms.DialogResult]::Cancel
+        & $styleButton $cancelButton $false
+        $buttonPanel.Controls.Add($confirmButton); $buttonPanel.Controls.Add($cancelButton)
+        $pickerLayout.Controls.Add($buttonPanel,0,2)
+        $dialog.CancelButton = $cancelButton
+
+        $runSearch = {
+            $query = $queryBox.Text.Trim()
+            if ([string]::IsNullOrWhiteSpace($query)) { $searchStatus.Text = '请输入搜索关键字'; return }
+            $searchButton.Enabled = $false
+            $searchStatus.Text = '查询中...'
+            $pickerGrid.Rows.Clear()
+            try {
+                $searchScript = Join-Path ([string]$Context.ScriptRoot) 'Invoke-PucAppMemberSearch.ps1'
+                $lines = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $searchScript -Environment $environmentName -Query $query -ConfigRoot $configRoot 2>&1)
+                if ($LASTEXITCODE -ne 0) { throw (($lines | ForEach-Object { [string]$_ }) -join [Environment]::NewLine) }
+                $result = $null
+                for ($index = $lines.Count - 1; $index -ge 0; $index--) {
+                    try { $result = ([string]$lines[$index]) | ConvertFrom-Json; break } catch {}
+                }
+                if ($null -eq $result) { throw '调度员搜索未返回有效结果。' }
+                foreach ($item in @($result.results)) {
+                    [void]$pickerGrid.Rows.Add($false,[string]$item.name,[string]$item.account,[string]$item.appPucId)
+                }
+                $searchStatus.Text = if ($pickerGrid.Rows.Count -eq 0) { '未找到匹配调度员' } else { "找到 $($pickerGrid.Rows.Count) 个调度员" }
+            } catch {
+                $searchStatus.Text = '查询失败'
+                $errorMessage = $_.Exception.Message
+                & $reportSearchError $errorMessage
+                [Windows.Forms.MessageBox]::Show($dialog,$errorMessage,'搜索调度员','OK','Warning') | Out-Null
+            } finally { $searchButton.Enabled = $true }
+        }.GetNewClosure()
+        $searchButton.Add_Click($runSearch)
+        $queryBox.Add_KeyDown(({
+            param($sender,$eventArgs)
+            if ($eventArgs.KeyCode -eq [Windows.Forms.Keys]::Enter) { $eventArgs.SuppressKeyPress = $true; & $runSearch }
+        }.GetNewClosure()))
+        $pickerGrid.Add_CellDoubleClick(({
+            param($sender,$eventArgs)
+            if ($eventArgs.RowIndex -ge 0) { $row = $pickerGrid.Rows[$eventArgs.RowIndex]; $row.Cells['selected'].Value = -not [bool]$row.Cells['selected'].Value }
+        }.GetNewClosure()))
+        $confirmButton.Add_Click(({
+            $pickerGrid.EndEdit()
+            $selected = @($pickerGrid.Rows | Where-Object { [bool]$_.Cells['selected'].Value } | ForEach-Object {
+                [pscustomobject]@{account=[string]$_.Cells['account'].Value;appPucId=[string]$_.Cells['app_puc_id'].Value}
+            })
+            if ($selected.Count -eq 0) { $searchStatus.Text = '请至少选择一个调度员'; return }
+            & $addMembers $selected
+            $dialog.DialogResult = [Windows.Forms.DialogResult]::OK
+            $dialog.Close()
+        }.GetNewClosure()))
+        try { [void]$dialog.ShowDialog($Context.Form) } finally { $dialog.Dispose() }
+    }.GetNewClosure()
+    $state.ShowMemberPickerAction = $showMemberPicker
 
     $setServerAddress = {
         param([string]$Address)
@@ -477,7 +649,10 @@
     $setLoginLifecycle = {
         param([string]$EventName, [string]$Message = '', $Session = $null)
         if ($EventName -eq 'message') {
-            if (-not [string]::IsNullOrWhiteSpace($Message)) { $hintLabel.Text = $Message }
+            if (-not [string]::IsNullOrWhiteSpace($Message)) {
+                $hintLabel.Text = $Message
+                & $Context['WriteLog'] 'APP业务' "[$EventName] $Message"
+            }
             return
         }
         $labels = @{
@@ -485,6 +660,19 @@
             login_success='在线';reconnecting='正在重连';disconnected='已断开';error='错误';stopped='已停止'
         }
         if (-not $labels.ContainsKey($EventName)) { return }
+        if ($EventName -eq 'error' -and -not [string]::IsNullOrWhiteSpace($Message)) {
+            $state.LastLoginError = $Message
+        } elseif ($EventName -in @('connecting','token_acquired','websocket_connected','login_success')) {
+            $state.LastLoginError = ''
+        } elseif ($EventName -eq 'stopped') {
+            if ($Message -eq 'client stopped' -and -not [string]::IsNullOrWhiteSpace($state.LastLoginError)) {
+                $Message = $state.LastLoginError
+            } else {
+                $state.LastLoginError = ''
+            }
+        }
+        $logMessage = if ([string]::IsNullOrWhiteSpace($Message)) { [string]$labels[$EventName] } else { $Message }
+        & $Context['WriteLog'] 'APP业务' "[$EventName] $logMessage"
         $state.LoginOnline = $EventName -eq 'login_success'
         $state.LoginActive = $EventName -in @('connecting','token_acquired','websocket_connected','login_success','reconnecting','disconnected','error')
         $onlineLabel.Text = "在线状态：$($labels[$EventName])"
@@ -500,6 +688,7 @@
         $loginButton.Text = if ($state.LoginActive) { '停止' } else { '登录' }
         $accountBox.Enabled = -not $state.LoginActive
         $passwordBox.Enabled = -not $state.LoginActive
+        $serverBox.Enabled = -not $state.LoginActive
         $serverBox.ReadOnly = $followEnvironmentBox.Checked -or $state.LoginActive
         $environmentBox.Enabled = -not $state.LoginActive
         $followEnvironmentBox.Enabled = -not $state.LoginActive
@@ -618,8 +807,10 @@
             $generation = & $getValue $message 'generation'
             if ($null -eq $generation -or [string]$generation -ne [string]$state.LoginGeneration) { return }
             if ($eventName -eq 'heartbeat') {
-                $heartbeatLabel.Text = '心跳状态：正常 ' + [datetime]::Now.ToString('HH:mm:ss')
+                $heartbeatTime = [datetime]::Now.ToString('HH:mm:ss')
+                $heartbeatLabel.Text = '心跳状态：正常 ' + $heartbeatTime
                 $heartbeatLabel.ForeColor = [Drawing.Color]::FromArgb(0,115,90)
+                & $Context['WriteLog'] 'APP业务' "[heartbeat] 心跳正常 $heartbeatTime"
                 return
             }
             & $setLoginLifecycle $eventName ([string](& $getValue $message 'message')) (& $getValue $message 'session')
@@ -703,7 +894,7 @@
         if ([string]::IsNullOrWhiteSpace($server)) { throw '请选择或输入服务器地址。' }
         & $startBridge
         $state.LoginGeneration++
-        & $sendCommand @{command='login';generation=$state.LoginGeneration;account=$account;password=$password;server=$server}
+        & $sendCommand @{command='login';generation=$state.LoginGeneration;account=$account;password=$password;server=$server;verify_tls=$false}
         $heartbeatLabel.Text = '心跳状态：等待心跳'
         $heartbeatLabel.ForeColor = [Drawing.Color]::FromArgb(92,102,110)
         & $setLoginLifecycle 'connecting' '正在连接 APP PUC 服务。'
@@ -775,10 +966,16 @@
             } else { & $state.StartLoginAction }
         } catch {
             $hintLabel.Text = $_.Exception.Message
+            & $Context['WriteLog'] 'APP业务' "[error] $($_.Exception.Message)"
             [Windows.Forms.MessageBox]::Show($Context.Form,$_.Exception.Message,'APP 登录','OK','Warning') | Out-Null
         }
     }.GetNewClosure()))
-    $addMemberButton.Add_Click(({ [void]$memberGrid.Rows.Add() }.GetNewClosure()))
+    $addMemberButton.Add_Click(({
+        try { & $state.ShowMemberPickerAction } catch {
+            & $reportSearchError $_.Exception.Message
+            [Windows.Forms.MessageBox]::Show($Context.Form,$_.Exception.Message,'添加成员','OK','Warning') | Out-Null
+        }
+    }.GetNewClosure()))
     $removeMemberButton.Add_Click(({
         foreach ($row in @($memberGrid.SelectedRows)) {
             if (-not $row.IsNewRow) { $memberGrid.Rows.Remove($row) }
@@ -810,6 +1007,11 @@
             OnlineStatus=$onlineLabel
             HeartbeatStatus=$heartbeatLabel
             Business=$businessBox
+            AddMember=$addMemberButton
+            MemberGrid=$memberGrid
         }
+        AddMembers=$addMembers
+        ResolveConfigRoot=$resolveConfigRoot
+        ReportSearchError=$reportSearchError
     }
 }

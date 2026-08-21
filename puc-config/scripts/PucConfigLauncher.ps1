@@ -1187,6 +1187,86 @@ $mainTabs = New-Object Windows.Forms.TabControl
 $mainTabs.Dock = [Windows.Forms.DockStyle]::Fill
 $mainTabs.Padding = New-Object Drawing.Point(14,5)
 $mainTabs.BackColor = [Drawing.Color]::FromArgb(246,248,250)
+
+$workspaceSplit = New-Object Windows.Forms.SplitContainer
+$workspaceSplit.Dock = [Windows.Forms.DockStyle]::Fill
+$workspaceSplit.Orientation = [Windows.Forms.Orientation]::Vertical
+$workspaceSplit.FixedPanel = [Windows.Forms.FixedPanel]::Panel2
+$workspaceSplit.SplitterWidth = 6
+$workspaceSplit.Size = New-Object Drawing.Size(1220,520)
+$workspaceSplit.BackColor = [Drawing.Color]::FromArgb(220,225,228)
+$workspaceSplit.Panel1MinSize = 720
+$workspaceSplit.Panel2MinSize = 280
+$workspaceSplit.Panel1.Controls.Add($mainTabs)
+
+$businessLogGroup = New-Object Windows.Forms.GroupBox
+$businessLogGroup.Text = '运行日志'
+$businessLogGroup.Dock = [Windows.Forms.DockStyle]::Fill
+$businessLogGroup.Padding = New-Object Windows.Forms.Padding(10,8,10,10)
+$workspaceSplit.Panel2.Padding = New-Object Windows.Forms.Padding(8,8,12,8)
+$workspaceSplit.Panel2.Controls.Add($businessLogGroup)
+
+$businessLogLayout = New-Object Windows.Forms.TableLayoutPanel
+$businessLogLayout.Dock = [Windows.Forms.DockStyle]::Fill
+$businessLogLayout.ColumnCount = 1
+$businessLogLayout.RowCount = 2
+[void]$businessLogLayout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute,34)))
+[void]$businessLogLayout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Percent,100)))
+$businessLogGroup.Controls.Add($businessLogLayout)
+
+$businessLogToolbar = New-Object Windows.Forms.FlowLayoutPanel
+$businessLogToolbar.Dock = [Windows.Forms.DockStyle]::Fill
+$businessLogToolbar.FlowDirection = [Windows.Forms.FlowDirection]::RightToLeft
+$businessLogToolbar.WrapContents = $false
+$businessLogToolbar.Margin = New-Object Windows.Forms.Padding(0)
+$businessLogLayout.Controls.Add($businessLogToolbar,0,0)
+
+$clearBusinessLogButton = New-Object Windows.Forms.Button
+$clearBusinessLogButton.Text = '清空'
+$clearBusinessLogButton.Size = New-Object Drawing.Size(68,28)
+$clearBusinessLogButton.Margin = New-Object Windows.Forms.Padding(6,1,0,1)
+Set-PucButtonStyle $clearBusinessLogButton
+$businessLogToolbar.Controls.Add($clearBusinessLogButton)
+
+$copyBusinessLogButton = New-Object Windows.Forms.Button
+$copyBusinessLogButton.Text = '复制全部'
+$copyBusinessLogButton.Size = New-Object Drawing.Size(82,28)
+$copyBusinessLogButton.Margin = New-Object Windows.Forms.Padding(6,1,0,1)
+Set-PucButtonStyle $copyBusinessLogButton
+$businessLogToolbar.Controls.Add($copyBusinessLogButton)
+
+$businessLogBox = New-Object Windows.Forms.TextBox
+$businessLogBox.Multiline = $true
+$businessLogBox.ReadOnly = $true
+$businessLogBox.ScrollBars = [Windows.Forms.ScrollBars]::Both
+$businessLogBox.WordWrap = $false
+$businessLogBox.Dock = [Windows.Forms.DockStyle]::Fill
+$businessLogBox.BackColor = [Drawing.Color]::White
+$businessLogBox.Font = New-Object Drawing.Font('Consolas',9)
+$businessLogBox.Margin = New-Object Windows.Forms.Padding(0,4,0,0)
+$businessLogLayout.Controls.Add($businessLogBox,0,1)
+
+$writeBusinessLogAction = {
+    param([string]$Category, [string]$Message)
+    if ([string]::IsNullOrWhiteSpace($Message)) { return }
+    $safeMessage = Format-PucResultRawText -Outputs @($Message)
+    $entry = "[$([datetime]::Now.ToString('HH:mm:ss'))] [$Category] $safeMessage`r`n"
+    if ($businessLogBox.TextLength -gt 200000) {
+        $businessLogBox.Text = $businessLogBox.Text.Substring(50000)
+    }
+    $businessLogBox.AppendText($entry)
+    $businessLogBox.SelectionStart = $businessLogBox.TextLength
+    $businessLogBox.ScrollToCaret()
+}.GetNewClosure()
+
+$copyBusinessLogButton.Add_Click(({
+    if (-not [string]::IsNullOrWhiteSpace($businessLogBox.Text)) {
+        [Windows.Forms.Clipboard]::SetText($businessLogBox.Text)
+    }
+}.GetNewClosure()))
+$clearBusinessLogButton.Add_Click(({ $businessLogBox.Clear() }.GetNewClosure()))
+& $writeBusinessLogAction '系统' '日志已启动。'
+
 $configTab = New-Object Windows.Forms.TabPage
 $configTab.Text = 'PUC 配置'
 $configTab.BackColor = [Drawing.Color]::FromArgb(246,248,250)
@@ -1202,7 +1282,10 @@ $existingControlStates = @($form.Controls | ForEach-Object {
 foreach ($state in $existingControlStates) { $state.Control.Anchor = 'Top,Left' }
 $form.SuspendLayout()
 $form.Controls.Clear()
-$form.Controls.Add($mainTabs)
+$form.ClientSize = New-Object Drawing.Size(1220,$sourceClientSize.Height)
+$form.MinimumSize = New-Object Drawing.Size(1100,600)
+$workspaceSplit.SplitterDistance = 860
+$form.Controls.Add($workspaceSplit)
 $form.ResumeLayout($true)
 $form.PerformLayout()
 $mainTabs.PerformLayout()
@@ -1234,6 +1317,8 @@ if ($tabEnabled['app-business']) {
         $appContext = @{
             Form=$form
             ScriptRoot=$PSScriptRoot
+            WriteLog=$writeBusinessLogAction
+            GetConfigRoot={ Get-PucConfigRoot }
             GetEnvironments={ @(Get-EnvironmentEntries) }
             AddEnvironment={
                 if (-not $mainTabs.TabPages.Contains($configTab)) { throw 'PUC 配置页未启用，无法新增环境。' }
@@ -1440,6 +1525,8 @@ function Show-PucStandaloneResult {
     )
     $model = New-PucResultModel -Outputs $Outputs -OperationLabel $OperationLabel -Environment $Environment -Stage $Stage -ExecutionNodes $ExecutionNodes -StartedAt $StartedAt -ViewState $ViewState -ExitCode $ExitCode
     Show-PucResultModel $model
+    $logText = if ([string]::IsNullOrWhiteSpace([string]$model.RawText)) { [string]$model.StatusText } else { [string]$model.RawText }
+    & $writeBusinessLogAction $(if ([string]::IsNullOrWhiteSpace($OperationLabel)) {'PUC配置'} else {$OperationLabel}) $logText
 }
 
 function New-InputControl($Field, [int]$Index, [int]$X, [int]$Y, [int]$Width) {
@@ -1852,6 +1939,7 @@ function Start-Stage([string]$Stage, [string[]]$Arguments) {
         '*-preview' {'正在预检...'}
         default {'正在执行...'}
     }
+    & $writeBusinessLogAction 'PUC配置' ("开始：" + (Get-PucStageDisplayLabel $Stage))
     Show-CurrentOutputs -ViewState Progress
 }
 
@@ -2141,6 +2229,7 @@ $timer.Add_Tick({
     } else { "=== $(Get-PucStageDisplayLabel $stage) ===" }
     $stageOutput = if ([string]::IsNullOrWhiteSpace($result.Text)) {'（无输出）'} else {$result.Text}
     $script:ExecutionState.Outputs.Add("$stageHeading`r`n$stageOutput")
+    & $writeBusinessLogAction 'PUC配置' "$stageHeading`r`n$stageOutput"
 
     if($stage -eq 'create-live' -and $result.ExitCode -ne 0 -and $result.Text -match 'ACCOUNT_LOOKUP_DECISION_REQUIRED'){
         if ($node.Count -eq 1) { $node[0].Status = 'pending' }
@@ -2550,8 +2639,10 @@ if ($UiSelfTest) {
         }
         if ($resultGrid.Columns['stage1Result'].HeaderText -ne '阶段 1 结果' -or $resultGrid.Columns['writesUsed'].HeaderText -ne '写入次数') { throw '结果列中文标题不正确。' }
         if ($detailsBox.Text -match 'UI-SECRET') { throw '详细输出包含未脱敏字段。' }
+        & $writeBusinessLogAction '自检' 'global-log-visible token=GLOBAL-LOG-SECRET'
+        if ($businessLogBox.Text -notmatch 'global-log-visible' -or $businessLogBox.Text -match 'GLOBAL-LOG-SECRET') { throw '全局日志内容未显示或未正确脱敏。' }
         if ($resultTabs.Height -lt 300 -or $resultLayout.RowStyles[1].SizeType -ne [Windows.Forms.SizeType]::Percent) { throw '执行摘要区域未使用完整可用高度。' }
-        if ($resultTabs.Left -ne 24 -or $resultTabs.Right -ne ($form.ClientSize.Width - 24)) { throw '运行信息区域未与容器宽度保持一致。' }
+        if ($resultTabs.Left -ne 24 -or $resultTabs.Right -ne ($configSurface.ClientSize.Width - 24)) { throw '运行信息区域未与配置页容器宽度保持一致。' }
         if ($null -eq $form.Icon -or -not $form.ShowIcon -or -not (Test-Path -LiteralPath $launcherIconPath -PathType Leaf)) { throw '主窗口未加载桌面快捷方式使用的 PUC Toolkit 图标。' }
         if ([PucTaskbarIdentity]::GetProcessIdentity() -ne $script:PucAppUserModelId -or [PucTaskbarIdentity]::GetWindowProperty($form.Handle,5) -ne $script:PucAppUserModelId -or [PucTaskbarIdentity]::GetWindowProperty($form.Handle,3) -ne $taskbarIconResource) { throw '任务栏未绑定 PUC Toolkit 的独立应用标识和图标资源。' }
         [pscustomobject]@{status='ui-self-test-passed';tabs=$resultTabs.TabPages.Count;summaryFields=$resultFields.Items.Count;detailRows=$resultGrid.Rows.Count;resultHeight=$resultTabs.Height;environmentVersionControl='passed';versionCompatibilityWarning='passed';summaryFullHeight='passed';resultContainerWidth='passed';windowIcon='passed';taskbarIdentity='passed';inputPanelRedraw='passed';responsiveInputColumns='passed';latestStageRows='passed';compactNumericColumns='passed';accountColumnWidth='passed';inlineConfirmation='passed';uploadVisibility='passed';actionBarLayout='passed';createPrefixDefault='empty';createCountDefault=1;personnelTypeDropdown='passed';dispatcherSearchDropdown='passed';dispatcherSearchEvent='passed';dispatcherSearchStatus='passed';updateAccountSearchDropdown='passed';updateAccountSearchSelection='passed';resetAccountSearchDropdown='passed';resetAccountSearchSelection='passed';executionNodeColors='passed';redundantGroupColumn='hidden'} | ConvertTo-Json -Compress

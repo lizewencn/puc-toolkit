@@ -401,6 +401,9 @@ if ($SelfTest) {
     if (@($stageModel.Rows).Count -ne 2 -or @($stageModel.Rows | Where-Object group -eq '账号').Count -ne 0) { throw '执行结果不得混合预检与最终阶段数据。' }
     $nodeModel = New-PucResultModel -Outputs @('{"status":"previewed","results":[{"alias":"test","status":"planned"}]}') -OperationLabel '新增人员' -Environment '10.161.30.163' -ExecutionNodes @([pscustomobject]@{Label='人员新增预检';Status='completed'},[pscustomobject]@{Label='新增人员';Status='running'}) -StartedAt $resultStartedAt -ViewState Progress
     if (@($nodeModel.Fields | Where-Object Name -like 'executionNode*').Count -ne 2 -or [string]$nodeModel.Fields[2].Label -ne '1.') { throw '编号执行节点摘要渲染失败。' }
+    $updateResultText = "{`r`n  `"status`": `"updated`",`r`n  `"updatedCount`": 1,`r`n  `"installedCount`": 1,`r`n  `"results`": [`r`n    { `"package`": `"puc-config`", `"status`": `"updated`" },`r`n    { `"package`": `"puc-toolkit-updater`", `"status`": `"installed`" }`r`n  ]`r`n}"
+    $updateModel = New-PucResultModel -Outputs @($updateResultText) -OperationLabel '更新版本包' -Environment '' -ExecutionNodes @([pscustomobject]@{Label='检查并暂存版本包';Status='completed'},[pscustomobject]@{Label='关闭 GUI 并安装版本包';Status='completed'},[pscustomobject]@{Label='重启 GUI 并加载更新结果';Status='completed'}) -StartedAt $resultStartedAt -ViewState Finished -ExitCode 0
+    if (@($updateModel.Fields | Where-Object Name -like 'executionNode*').Count -ne 3 -or @($updateModel.Rows).Count -ne 2 -or [string]$updateModel.Rows[0].package -ne 'puc-config' -or [string]$updateModel.Rows[0].status -ne '已更新') { throw '多行更新结果或版本包列表渲染失败。' }
     $createModel = New-PucResultModel -Outputs @('{"status":"created","count":2,"succeeded":2,"failed":0,"results":[{"sequence":1,"account":"mhw163001","alias":"mhw163001_alias","status":"created"},{"sequence":2,"account":"mhw163002","alias":"mhw163002_alias","status":"created"}]}','{"status":"post-create-login-policy","environment":"10.161.30.163"}') -OperationLabel '新增调度账号' -Environment '10.161.30.163' -Stage 'create-live' -StartedAt $resultStartedAt -ViewState Finished -ExitCode 0
     if (@($createModel.Rows).Count -ne 2 -or [string]$createModel.Rows[0].account -ne 'mhw163001') { throw '新增账号执行结果表格验证失败。' }
     $errorModel = New-PucResultModel -Outputs @('Request failed; authorization=SECRET-VALUE. No retry was attempted.') -OperationLabel '更新账号' -Environment '10.161.30.163' -Stage 'update-live' -StartedAt $resultStartedAt -ViewState Finished -ExitCode 1
@@ -1333,11 +1336,12 @@ function Show-PucStandaloneResult {
         [string]$Environment,
         [string]$Stage,
         [string[]]$Outputs = @(),
+        [object[]]$ExecutionNodes = @(),
         [datetime]$StartedAt = [datetime]::Now,
         [ValidateSet('Progress','Finished')][string]$ViewState = 'Finished',
         [int]$ExitCode = 0
     )
-    $model = New-PucResultModel -Outputs $Outputs -OperationLabel $OperationLabel -Environment $Environment -Stage $Stage -StartedAt $StartedAt -ViewState $ViewState -ExitCode $ExitCode
+    $model = New-PucResultModel -Outputs $Outputs -OperationLabel $OperationLabel -Environment $Environment -Stage $Stage -ExecutionNodes $ExecutionNodes -StartedAt $StartedAt -ViewState $ViewState -ExitCode $ExitCode
     Show-PucResultModel $model
 }
 
@@ -1969,13 +1973,14 @@ function Complete-SkillUpdate {
     if ([string]$json.status -eq 'staged') {
         $workerPath=[IO.Path]::GetFullPath([string]$json.workerPath)
         $manifestPath=[IO.Path]::GetFullPath([string]$json.manifestPath)
-        if(-not(Test-Path -LiteralPath $workerPath -PathType Leaf)-or-not(Test-Path -LiteralPath $manifestPath -PathType Leaf)){
+        $workerDirectory=Split-Path -Parent $workerPath
+        if(-not(Test-Path -LiteralPath $workerPath -PathType Leaf)-or-not(Test-Path -LiteralPath $manifestPath -PathType Leaf)-or-not(Test-Path -LiteralPath $workerDirectory -PathType Container)){
             $statusLabel.Text='更新暂存结果无效';$statusLabel.ForeColor=[Drawing.Color]::FromArgb(184,70,45);Set-ControlsEnabled $true;return
         }
         $statusLabel.Text = '下载校验完成，正在退出并安装更新'
         $statusLabel.ForeColor = [Drawing.Color]::FromArgb(0,115,90)
         try {
-            Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"'+$workerPath+'"'),'-ManifestPath',('"'+$manifestPath+'"'),'-ParentProcessId',[string]$PID) -WindowStyle Hidden | Out-Null
+            Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"'+$workerPath+'"'),'-ManifestPath',('"'+$manifestPath+'"'),'-ParentProcessId',[string]$PID) -WorkingDirectory $workerDirectory -WindowStyle Hidden | Out-Null
         } catch {
             $statusLabel.Text='无法启动独立更新组件';$statusLabel.ForeColor=[Drawing.Color]::FromArgb(184,70,45);Set-ControlsEnabled $true;return
         }
@@ -1995,7 +2000,12 @@ function Show-PendingSkillUpdateResult {
         $text=Get-Content -Raw -LiteralPath $resultPath
         $record=$text|ConvertFrom-Json
         $failed=[string]$record.status -eq 'update-failed'
-        Show-PucStandaloneResult -OperationLabel '更新版本包' -Environment '' -Stage '关闭后安装版本包' -Outputs @($text) -StartedAt ([datetime]::Now) -ViewState Finished -ExitCode $(if($failed){1}else{0})
+        $updateNodes=@(
+            [pscustomobject]@{Label='检查并暂存版本包';Status='completed'}
+            [pscustomobject]@{Label='关闭 GUI 并安装版本包';Status=$(if($failed){'failed'}else{'completed'})}
+            [pscustomobject]@{Label='重启 GUI 并加载更新结果';Status='completed'}
+        )
+        Show-PucStandaloneResult -OperationLabel '更新版本包' -Environment '' -Stage '关闭后安装版本包' -Outputs @($text) -ExecutionNodes $updateNodes -StartedAt ([datetime]::Now) -ViewState Finished -ExitCode $(if($failed){1}else{0})
         $statusLabel.Text=$(if($failed){'版本包更新失败，已恢复旧版本'}else{'所有版本包更新完成'})
         $statusLabel.ForeColor=$(if($failed){[Drawing.Color]::FromArgb(184,70,45)}else{[Drawing.Color]::FromArgb(0,115,90)})
         $lastUpdateLabel.Text=Get-PucSkillUpdateDisplayText

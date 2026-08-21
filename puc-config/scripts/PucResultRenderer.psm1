@@ -48,7 +48,19 @@ function Protect-PucResultText([string]$Text) {
 function Get-PucResultRecords([string[]]$Outputs) {
     $records = [Collections.Generic.List[object]]::new()
     foreach ($output in @($Outputs)) {
-        foreach ($line in @(([string]$output) -split "`r?`n")) {
+        $outputText = ([string]$output).Trim()
+        $parsedOutput = $false
+        if ($outputText.StartsWith('{') -or $outputText.StartsWith('[')) {
+            try {
+                $parsed = $outputText | ConvertFrom-Json
+                if ($null -ne $parsed) {
+                    $records.Add($parsed)
+                    $parsedOutput = $true
+                }
+            } catch {}
+        }
+        if ($parsedOutput) { continue }
+        foreach ($line in @($outputText -split "`r?`n")) {
             $candidate = $line.Trim()
             if (-not ($candidate.StartsWith('{') -or $candidate.StartsWith('['))) { continue }
             try {

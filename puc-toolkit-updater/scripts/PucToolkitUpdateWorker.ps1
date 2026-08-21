@@ -58,6 +58,8 @@ $entries = New-Object System.Collections.Generic.List[object]
 $failedMessage = ''
 
 try {
+    Set-Location -LiteralPath $stageRoot
+    [Environment]::CurrentDirectory=$stageRoot
     if ($ParentProcessId -gt 0) {
         $parent = Get-Process -Id $ParentProcessId -ErrorAction SilentlyContinue
         if ($null -ne $parent) {

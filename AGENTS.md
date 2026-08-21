@@ -15,6 +15,8 @@ This file applies to the entire repository.
 
 ## Skills and Repository Structure
 
+- This repository primarily provides skill packages for agents; the GUI is only a fallback entry point for situations where agents are offline or unavailable.
+- When modifying files, prioritize the stability, compatibility, and reliable agent use of the skill packages over GUI-specific concerns.
 - Avoid using `superpowers:brainstorming` unless it is genuinely necessary for the task.
 - Respect `.gitignore` and never bypass it to force-add ignored files or directories.
 - Do not force-add the root `docs` directory; it is intentionally ignored.

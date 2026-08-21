@@ -129,7 +129,7 @@ class AppPucBridge:
             else:
                 self._error(name, "unsupported command")
         except Exception as exc:
-            self._error(name, str(exc))
+            self._error(name, str(exc), command.get("generation"))
 
     def _login(self, command: dict[str, Any]) -> None:
         required = ("account", "password", "server")
@@ -190,28 +190,29 @@ class AppPucBridge:
                 account=str(member.get("account") or ""),
                 app_puc_id=str(member.get("app_puc_id") or ""),
             ))
+        generation = command.get("generation")
         with self._batch_lock:
             if self._batch_is_running():
                 raise RuntimeError("another APP PUC group batch is running")
             self._batch_thread = threading.Thread(
                 target=self._run_batch,
-                args=(inputs, group_count),
+                args=(inputs, group_count, generation),
                 name="app-puc-group-batch",
                 daemon=True,
             )
             self._batch_thread.start()
-        self._write({"type": "response", "command": "batch_create_groups", "ok": True, "data": {"state": "started"}})
+        self._write({"type": "response", "command": "batch_create_groups", "generation": generation, "ok": True, "data": {"state": "started"}})
 
-    def _run_batch(self, members: list[AppGroupMemberInput], group_count: int) -> None:
+    def _run_batch(self, members: list[AppGroupMemberInput], group_count: int, generation: Any) -> None:
         try:
             summary = self.batch_service.create_groups(
                 members=members,
                 group_count=group_count,
-                on_progress=lambda progress: self._events.put({"kind": "batch_progress", "value": progress}),
+                on_progress=lambda progress: self._events.put({"kind": "batch_progress", "value": progress, "generation": generation}),
             )
-            self._events.put({"kind": "batch_done", "value": summary})
+            self._events.put({"kind": "batch_done", "value": summary, "generation": generation})
         except Exception as exc:
-            self._events.put({"kind": "batch_error", "value": str(exc)})
+            self._events.put({"kind": "batch_error", "value": str(exc), "generation": generation})
 
     def _on_login_event(self, event: LoginEvent, generation: Any = None) -> None:
         self._events.put({"kind": "login_event", "value": event, "generation": generation})
@@ -234,11 +235,11 @@ class AppPucBridge:
                     "session": self._session(),
                 })
             elif kind == "batch_progress":
-                self._write({"type": "event", "event": "batch_progress", "progress": _json_value(item["value"])})
+                self._write({"type": "event", "event": "batch_progress", "generation": item.get("generation"), "progress": _json_value(item["value"])})
             elif kind == "batch_done":
-                self._write({"type": "response", "command": "batch_create_groups", "ok": True, "data": {"state": "completed", "summary": _json_value(item["value"])}})
+                self._write({"type": "response", "command": "batch_create_groups", "generation": item.get("generation"), "ok": True, "data": {"state": "completed", "summary": _json_value(item["value"])}})
             elif kind == "batch_error":
-                self._error("batch_create_groups", str(item["value"]))
+                self._error("batch_create_groups", str(item["value"]), item.get("generation"))
 
     def _shutdown(self) -> None:
         if self.client.is_running:
@@ -281,8 +282,8 @@ class AppPucBridge:
             return ""
         return text.replace(self._password, "***") if self._password else text
 
-    def _error(self, command: str, message: str) -> None:
-        self._write({"type": "response", "command": command or None, "ok": False, "error": {"message": self._safe_text(message)}})
+    def _error(self, command: str, message: str, generation: Any = None) -> None:
+        self._write({"type": "response", "command": command or None, "generation": generation, "ok": False, "error": {"message": self._safe_text(message)}})
 
     @staticmethod
     def _write(value: dict[str, Any]) -> None:

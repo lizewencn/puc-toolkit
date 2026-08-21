@@ -15,10 +15,13 @@ foreach ($check in @(
     'appBatchMemberValidation',
     'appBatchCountValidation',
     'appBatchCommand',
+    'appBatchStartPath',
+    'appBatchGenerationIsolation',
     'appBatchProgress',
     'appBatchSummary',
     'appBatchDisconnectRecovery',
-    'appBatchResultIsolation'
+    'appBatchResultIsolation',
+    'appBatchFlexibleLayout'
 )) {
     if ([string]$summary.$check -ne 'passed') { throw "APP group batch check failed: $check" }
 }

@@ -77,9 +77,10 @@ try {
     Assert-True (-not [bool]$invalid.ok) 'Login without password should fail validation'
     Assert-True ([string]$invalid.error.message -match 'password') 'Login validation should identify password'
 
-    Send-Command $process @{ command = 'batch_create_groups'; members = @(@{ account = 'member'; app_puc_id = '100' }); group_count = 1 }
+    Send-Command $process @{ command = 'batch_create_groups'; generation = 23; members = @(@{ account = 'member'; app_puc_id = '100' }); group_count = 1 }
     $batch = Read-Event $process
     Assert-Equal $batch.command 'batch_create_groups' 'Batch command name'
+    Assert-Equal $batch.generation 23 'Batch error generation'
     Assert-True (-not [bool]$batch.ok) 'Batch without an authenticated session should fail'
     Assert-True ([string]$batch.error.message -match 'session') 'Batch error should explain missing session'
 
@@ -103,5 +104,11 @@ try {
         $process.Dispose()
     }
 }
+
+$python = Get-Python
+$workerProbePath = Join-Path $PSScriptRoot 'Test-AppPucBridgeWorkerGeneration.py'
+$probeOutput = @(& $python $workerProbePath 2>&1)
+if ($LASTEXITCODE -ne 0) { throw "APP bridge worker generation probe failed: $($probeOutput -join [Environment]::NewLine)" }
+if ($probeOutput[-1] -ne 'PASS AppPucBridgeWorkerGeneration') { throw 'APP bridge worker generation probe did not complete.' }
 
 Write-Output 'PASS AppPucBridgeContract'

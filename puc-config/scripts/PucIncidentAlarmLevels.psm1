@@ -8,6 +8,7 @@ function ConvertFrom-PucIncidentCodePoints([int[]]$Codes) {
 function Get-PucIncidentAlarmLevelDefinitions {
     $star = ConvertFrom-PucIncidentCodePoints 0x661f,0x6807
     $yellow = ConvertFrom-PucIncidentCodePoints 0x9ec4,0x6807
+    $yellowStar = $yellow + '+' + $star
     $normal = ConvertFrom-PucIncidentCodePoints 0x666e,0x901a
     $warning = ConvertFrom-PucIncidentCodePoints 0x9884,0x8b66
     $instruction = ConvertFrom-PucIncidentCodePoints 0x6307,0x4ee4
@@ -16,8 +17,9 @@ function Get-PucIncidentAlarmLevelDefinitions {
         [pscustomobject]@{Code='00';Name=$normal;Description=$normal+$suffix;Color='#73cb6d';Tone='MediumAlarm.wav'},
         [pscustomobject]@{Code='01';Name=$star;Description=$star+$suffix;Color='#E56659';Tone='CriticalAlarm.wav'},
         [pscustomobject]@{Code='02';Name=$yellow;Description=$yellow+$suffix;Color='#eba54d';Tone='MediumAlarm.wav'},
-        [pscustomobject]@{Code='03';Name=$warning;Description=$warning+$suffix;Color='#73cb6d';Tone='CommonlyAlarm.wav'},
-        [pscustomobject]@{Code='04';Name=$instruction;Description=$instruction+$suffix;Color='#73cb6d';Tone='CommonlyAlarm.wav'}
+        [pscustomobject]@{Code='03';Name=$yellowStar;Description=$yellowStar+$suffix;Color='#eba54d';Tone='MediumAlarm.wav';AssetName=$yellow},
+        [pscustomobject]@{Code='04';Name=$warning;Description=$warning+$suffix;Color='#73cb6d';Tone='CommonlyAlarm.wav'},
+        [pscustomobject]@{Code='05';Name=$instruction;Description=$instruction+$suffix;Color='#73cb6d';Tone='CommonlyAlarm.wav'}
     )
 }
 
@@ -27,7 +29,8 @@ function Resolve-PucIncidentAlarmLevelAssets {
     $resolvedDirectory = [IO.Path]::GetFullPath($AssetDirectory)
     if (-not (Test-Path -LiteralPath $resolvedDirectory -PathType Container)) { throw "Incident asset directory does not exist: $resolvedDirectory" }
     foreach ($item in @(Get-PucIncidentAlarmLevelDefinitions)) {
-        $selected = Join-Path $resolvedDirectory ($item.Name + '.zip')
+        $assetName = if ($item.PSObject.Properties.Match('AssetName').Count -gt 0) { [string]$item.AssetName } else { [string]$item.Name }
+        $selected = Join-Path $resolvedDirectory ($assetName + '.zip')
         if (-not (Test-Path -LiteralPath $selected -PathType Leaf)) { throw "Incident ZIP does not exist for level '$($item.Code)'." }
         [pscustomobject]@{
             Code=$item.Code;Name=$item.Name;Description=$item.Description;Color=$item.Color;Tone=$item.Tone

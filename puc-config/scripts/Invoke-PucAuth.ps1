@@ -44,6 +44,7 @@ function Get-SessionPaths([string]$SessionId) {
         Ready=Join-Path $directory 'ready.json'
         Input=Join-Path $directory 'input.json'
         Result=Join-Path $directory 'result.json'
+        Error=Join-Path $directory 'worker-error.log'
         Image=Join-Path $root ("captcha-$SessionId.png")
     }
 }
@@ -52,7 +53,7 @@ function Clear-PendingLogin([string]$SessionId) {
     Set-PucRuntimeEntry -ConfigRoot $root -Name $Environment -Entry (New-RuntimeEntry -PendingLogin $null)
     if ([string]::IsNullOrWhiteSpace($SessionId) -or $SessionId -notmatch '^[a-f0-9]{32}$') { return }
     $paths = Get-SessionPaths $SessionId
-    foreach ($file in @($paths.Ready,$paths.Input,$paths.Input+'.tmp',$paths.Result,$paths.Result+'.tmp',$paths.Image)) {
+    foreach ($file in @($paths.Ready,$paths.Input,$paths.Input+'.tmp',$paths.Result,$paths.Result+'.tmp',$paths.Error,$paths.Image)) {
         if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force }
     }
     if (Test-Path -LiteralPath $paths.Directory) {
@@ -156,7 +157,7 @@ try {
         $interactiveArgument = if ($Action -eq 'InteractiveLogin') { ' -Interactive' } else { '' }
         $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$workerPath`" -Environment `"$Environment`" -SessionId $sessionId -ConfigRoot `"$root`" -InputTimeoutSeconds 55$interactiveArgument"
         $windowStyle = 'Hidden'
-        $process = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WindowStyle $windowStyle -PassThru
+        $process = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WindowStyle $windowStyle -RedirectStandardError $paths.Error -PassThru
         $deadline = [DateTimeOffset]::UtcNow.AddSeconds(30)
         while (-not (Test-Path -LiteralPath $paths.Ready)) {
             if (Test-Path -LiteralPath $paths.Result) {
@@ -165,7 +166,9 @@ try {
                 throw "Captcha worker failed: $([string]$failure.detail)"
             }
             if ($process.HasExited) {
+                $workerError = if (Test-Path -LiteralPath $paths.Error) { (Get-Content -Raw -LiteralPath $paths.Error).Trim() } else { '' }
                 Clear-PendingLogin $sessionId
+                if ($workerError) { throw "Captcha worker exited before returning a captcha (exit code $($process.ExitCode)): $workerError" }
                 throw "Captcha worker exited before returning a captcha (exit code $($process.ExitCode))."
             }
             if ([DateTimeOffset]::UtcNow -ge $deadline) {

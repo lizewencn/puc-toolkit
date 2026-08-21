@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Environment,
     [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{32}$')][string]$SessionId,
@@ -65,24 +65,37 @@ public static class PucConsoleWindow {
     Add-Type -AssemblyName System.Drawing
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = 'PUC Login Verification'
+    $form.Text = 'PUC 登录验证'
     $form.StartPosition = 'CenterScreen'
     $form.FormBorderStyle = 'FixedDialog'
     $form.MaximizeBox = $false
     $form.MinimizeBox = $false
     $form.TopMost = $true
-    $form.ClientSize = New-Object System.Drawing.Size(360,190)
+    $form.ClientSize = New-Object System.Drawing.Size(420,230)
+    $form.BackColor = [Drawing.Color]::FromArgb(246,248,250)
+    $form.Font = New-Object Drawing.Font('Microsoft YaHei UI',9)
 
     $titleLabel = New-Object System.Windows.Forms.Label
-    $titleLabel.Text = 'Enter the captcha before it expires.'
+    $titleLabel.Text = '请在验证码过期前输入验证码。'
     $titleLabel.AutoSize = $true
+    $titleLabel.Font = New-Object Drawing.Font('Microsoft YaHei UI',10,[Drawing.FontStyle]::Bold)
+    $titleLabel.ForeColor = [Drawing.Color]::FromArgb(28,37,44)
     $titleLabel.Location = New-Object System.Drawing.Point(24,18)
     $form.Controls.Add($titleLabel)
 
+    $captchaLabel = New-Object System.Windows.Forms.Label
+    $captchaLabel.Text = '验证码'
+    $captchaLabel.AutoSize = $true
+    $captchaLabel.ForeColor = [Drawing.Color]::FromArgb(92,102,110)
+    $captchaLabel.Location = New-Object System.Drawing.Point(184,40)
+    $form.Controls.Add($captchaLabel)
+
     $picture = New-Object System.Windows.Forms.PictureBox
     $picture.Location = New-Object System.Drawing.Point(24,52)
-    $picture.Size = New-Object System.Drawing.Size(120,34)
+    $picture.Size = New-Object System.Drawing.Size(140,42)
     $picture.SizeMode = 'StretchImage'
+    $picture.BorderStyle = [Windows.Forms.BorderStyle]::FixedSingle
+    $picture.BackColor = [Drawing.Color]::White
     $imageBytes = [IO.File]::ReadAllBytes($ImagePath)
     $imageStream = New-Object IO.MemoryStream(,$imageBytes)
     $sourceImage = [Drawing.Image]::FromStream($imageStream)
@@ -92,27 +105,46 @@ public static class PucConsoleWindow {
     $form.Controls.Add($picture)
 
     $captchaTextBox = New-Object System.Windows.Forms.TextBox
-    $captchaTextBox.Location = New-Object System.Drawing.Point(164,52)
-    $captchaTextBox.Size = New-Object System.Drawing.Size(170,28)
-    $captchaTextBox.Font = New-Object System.Drawing.Font('Segoe UI',12)
+    $captchaTextBox.Location = New-Object System.Drawing.Point(184,58)
+    $captchaTextBox.Size = New-Object System.Drawing.Size(210,30)
+    $captchaTextBox.Font = New-Object System.Drawing.Font('Segoe UI',11)
+    $captchaTextBox.BackColor = [Drawing.Color]::White
     $captchaTextBox.MaxLength = 16
     $form.Controls.Add($captchaTextBox)
 
     $countdown = New-Object System.Windows.Forms.Label
     $countdown.AutoSize = $true
-    $countdown.Location = New-Object System.Drawing.Point(24,105)
+    $countdown.ForeColor = [Drawing.Color]::FromArgb(92,102,110)
+    $countdown.Location = New-Object System.Drawing.Point(24,126)
     $form.Controls.Add($countdown)
 
     $submit = New-Object System.Windows.Forms.Button
-    $submit.Text = 'Login'
-    $submit.Location = New-Object System.Drawing.Point(164,130)
-    $submit.Size = New-Object System.Drawing.Size(80,30)
+    $submit.Text = '登录'
+    $submit.Location = New-Object System.Drawing.Point(222,170)
+    $submit.Size = New-Object System.Drawing.Size(86,34)
+    $submit.FlatStyle = [Windows.Forms.FlatStyle]::Flat
+    $submit.FlatAppearance.BorderSize = 0
+    $submit.FlatAppearance.MouseOverBackColor = [Drawing.Color]::FromArgb(0,116,109)
+    $submit.FlatAppearance.MouseDownBackColor = [Drawing.Color]::FromArgb(0,96,90)
+    $submit.UseVisualStyleBackColor = $false
+    $submit.BackColor = [Drawing.Color]::FromArgb(0,134,126)
+    $submit.ForeColor = [Drawing.Color]::White
+    $submit.Cursor = [Windows.Forms.Cursors]::Hand
     $form.Controls.Add($submit)
 
     $cancel = New-Object System.Windows.Forms.Button
-    $cancel.Text = 'Cancel'
-    $cancel.Location = New-Object System.Drawing.Point(254,130)
-    $cancel.Size = New-Object System.Drawing.Size(80,30)
+    $cancel.Text = '取消'
+    $cancel.Location = New-Object System.Drawing.Point(316,170)
+    $cancel.Size = New-Object System.Drawing.Size(78,34)
+    $cancel.FlatStyle = [Windows.Forms.FlatStyle]::Flat
+    $cancel.FlatAppearance.BorderSize = 1
+    $cancel.FlatAppearance.BorderColor = [Drawing.Color]::FromArgb(190,197,202)
+    $cancel.FlatAppearance.MouseOverBackColor = [Drawing.Color]::FromArgb(232,243,242)
+    $cancel.FlatAppearance.MouseDownBackColor = [Drawing.Color]::FromArgb(214,234,232)
+    $cancel.UseVisualStyleBackColor = $false
+    $cancel.BackColor = [Drawing.Color]::White
+    $cancel.ForeColor = [Drawing.Color]::FromArgb(28,37,44)
+    $cancel.Cursor = [Windows.Forms.Cursors]::Hand
     $cancel.DialogResult = [Windows.Forms.DialogResult]::Cancel
     $form.Controls.Add($cancel)
 
@@ -120,7 +152,7 @@ public static class PucConsoleWindow {
     $timer.Interval = 200
     $timer.Add_Tick({
         $remaining = [Math]::Max(0,[Math]::Ceiling(($Deadline - [DateTimeOffset]::UtcNow).TotalSeconds))
-        $countdown.Text = "Expires in $remaining seconds"
+        $countdown.Text = "验证码将在 $remaining 秒后过期"
         if ($remaining -le 0) {
             $timer.Stop()
             $form.Tag = 'expired'
@@ -129,7 +161,7 @@ public static class PucConsoleWindow {
     })
     $submit.Add_Click({
         if ([string]::IsNullOrWhiteSpace($captchaTextBox.Text)) {
-            [Windows.Forms.MessageBox]::Show('Enter the captcha first.','PUC Login') | Out-Null
+            [Windows.Forms.MessageBox]::Show('请先输入验证码。','PUC 登录') | Out-Null
             return
         }
         $timer.Stop()

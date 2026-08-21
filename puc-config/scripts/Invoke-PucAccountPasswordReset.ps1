@@ -33,6 +33,7 @@ $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment
 $baseUri = [uri]$environmentConfig.baseUrl
 
 function Get-PropertyValue($Object, [string]$Name, $Default = $null) {
+    if ($null -eq $Object) { return $Default }
     $property = @($Object.PSObject.Properties.Match($Name)) | Select-Object -First 1
     if ($null -eq $property) { return $Default }
     return $property.Value
@@ -69,7 +70,9 @@ function Get-ExactAccount {
             page_sizes=30; page_index=$pageIndex; querykey=$Account; lock_query=0; filter=[ordered]@{by_role='';by_state=0}
         })
         foreach ($row in @((Get-PropertyValue $response 'account_list' @()))) {
-            if ([string]::Equals([string](Get-PropertyValue $row 'dispatcher_account' ''),$Account,[StringComparison]::OrdinalIgnoreCase)) { $matches.Add($row) }
+            $rowAccount = [string](Get-PropertyValue $row 'dispatcher_account' '')
+            if ([string]::IsNullOrWhiteSpace($rowAccount)) { continue }
+            if ([string]::Equals($rowAccount,$Account,[StringComparison]::OrdinalIgnoreCase)) { $matches.Add($row) }
         }
         $pageCount = 0
         [void][int]::TryParse([string](Get-PropertyValue $response 'page_count' 0),[ref]$pageCount)

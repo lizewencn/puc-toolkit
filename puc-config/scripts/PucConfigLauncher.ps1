@@ -104,6 +104,7 @@ function Get-PucExecutionNodeDefinitions([string]$Operation, [string]$Action = '
         'complete' { return @((New-PucExecutionNode '账号补全预检' @('completion-preview')),(New-PucExecutionNode '补全账号信息' @('completion-live'))) }
         'update' { return @((New-PucExecutionNode '检查变更文件' @('update-plan')),(New-PucExecutionNode '账号更新预检' @('update-preview')),(New-PucExecutionNode '更新账号' @('update-live'))) }
         {$_ -in @('personnel-prefix','personnel-exact')} { return @((New-PucExecutionNode '人员新增预检' @('personnel-preview')),(New-PucExecutionNode '新增人员' @('personnel-live'))) }
+        'role' { return @((New-PucExecutionNode '角色新增预检' @('role-preview')),(New-PucExecutionNode '新增角色' @('role-live'))) }
         'policy' {
             if ($Action -eq 'Status') { return @((New-PucExecutionNode '查询首次登录策略' @('policy-status'))) }
             return @((New-PucExecutionNode '首次登录策略预检' @('policy-preview')),(New-PucExecutionNode '更新首次登录策略' @('policy-live')))
@@ -135,7 +136,7 @@ function Set-PucPendingExecutionNodesSkipped($State) {
 
 $script:Operations = @(
     [pscustomobject]@{Key='create';Label='新增调度账号';Fields=@(
-        (New-Field 'prefix' '账号前缀' 'Text' 'mhw'),
+        (New-Field 'prefix' '账号前缀' 'Text' ''),
         (New-Field 'count' '创建数量' 'Number' 1)
     )},
     [pscustomobject]@{Key='reset';Label='重置单个账号密码';Fields=@(
@@ -170,6 +171,9 @@ $script:Operations = @(
         (New-Field 'dispatcherAccount' '关联调度账号（输入关键字搜索，可选）' 'SearchCombo'),
         (New-Field 'rootOrganizationName' '根组织名称（可选）' 'Text')
     )},
+    [pscustomobject]@{Key='role';Label='新增角色';Fields=@(
+        (New-Field 'roleAlias' '角色名称' 'Text')
+    )},
     [pscustomobject]@{Key='policy';Label='首次登录密码验证';Fields=@(
         (New-Field 'action' '操作' 'Combo' 'Status' $actionOptions)
     )},
@@ -200,10 +204,13 @@ $script:DefaultNewAccountPassword = '888'
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+Add-Type -Path (Join-Path $PSScriptRoot 'PucTaskbarIdentity.cs')
+$script:PucAppUserModelId = 'lizewencn.PucToolkit'
+[PucTaskbarIdentity]::SetProcessIdentity($script:PucAppUserModelId)
 [Windows.Forms.Application]::EnableVisualStyles()
 Import-Module (Join-Path $PSScriptRoot 'PucResultRenderer.psm1') -Force
 
-function Set-PucButtonStyle($Button, [ValidateSet('Primary','Secondary')][string]$Kind = 'Secondary') {
+function Set-PucButtonStyle($Button, [ValidateSet('Primary','Secondary','Info','Upload','Soft','Utility','OutlineInfo','OutlineTheme','OutlineWarning')][string]$Kind = 'Secondary') {
     $Button.AutoSize = $false
     $Button.FlatStyle = [Windows.Forms.FlatStyle]::Flat
     $Button.UseVisualStyleBackColor = $false
@@ -216,6 +223,53 @@ function Set-PucButtonStyle($Button, [ValidateSet('Primary','Secondary')][string
         $Button.FlatAppearance.BorderSize = 0
         $Button.FlatAppearance.MouseOverBackColor = [Drawing.Color]::FromArgb(0,116,109)
         $Button.FlatAppearance.MouseDownBackColor = [Drawing.Color]::FromArgb(0,96,90)
+    } elseif ($Kind -eq 'Info') {
+        $normalBackColor = [Drawing.Color]::FromArgb(37,99,235)
+        $normalForeColor = [Drawing.Color]::White
+        $Button.FlatAppearance.BorderSize = 0
+        $Button.FlatAppearance.MouseOverBackColor = [Drawing.Color]::FromArgb(29,78,216)
+        $Button.FlatAppearance.MouseDownBackColor = [Drawing.Color]::FromArgb(30,64,175)
+    } elseif ($Kind -eq 'Upload') {
+        $normalBackColor = [Drawing.Color]::FromArgb(79,70,229)
+        $normalForeColor = [Drawing.Color]::White
+        $Button.FlatAppearance.BorderSize = 0
+        $Button.FlatAppearance.MouseOverBackColor = [Drawing.Color]::FromArgb(67,56,202)
+        $Button.FlatAppearance.MouseDownBackColor = [Drawing.Color]::FromArgb(55,48,163)
+    } elseif ($Kind -eq 'Utility') {
+        $normalBackColor = [Drawing.Color]::FromArgb(241,245,249)
+        $normalForeColor = [Drawing.Color]::FromArgb(51,65,85)
+        $Button.FlatAppearance.BorderSize = 1
+        $Button.FlatAppearance.BorderColor = [Drawing.Color]::FromArgb(203,213,225)
+        $Button.FlatAppearance.MouseOverBackColor = [Drawing.Color]::FromArgb(226,232,240)
+        $Button.FlatAppearance.MouseDownBackColor = [Drawing.Color]::FromArgb(203,213,225)
+    } elseif ($Kind -eq 'OutlineInfo') {
+        $normalBackColor = [Drawing.Color]::White
+        $normalForeColor = [Drawing.Color]::FromArgb(29,78,216)
+        $Button.FlatAppearance.BorderSize = 1
+        $Button.FlatAppearance.BorderColor = [Drawing.Color]::FromArgb(147,197,253)
+        $Button.FlatAppearance.MouseOverBackColor = [Drawing.Color]::FromArgb(239,246,255)
+        $Button.FlatAppearance.MouseDownBackColor = [Drawing.Color]::FromArgb(219,234,254)
+    } elseif ($Kind -eq 'OutlineTheme') {
+        $normalBackColor = [Drawing.Color]::White
+        $normalForeColor = [Drawing.Color]::FromArgb(0,105,99)
+        $Button.FlatAppearance.BorderSize = 1
+        $Button.FlatAppearance.BorderColor = [Drawing.Color]::FromArgb(134,203,196)
+        $Button.FlatAppearance.MouseOverBackColor = [Drawing.Color]::FromArgb(240,250,249)
+        $Button.FlatAppearance.MouseDownBackColor = [Drawing.Color]::FromArgb(214,234,232)
+    } elseif ($Kind -eq 'OutlineWarning') {
+        $normalBackColor = [Drawing.Color]::White
+        $normalForeColor = [Drawing.Color]::FromArgb(194,95,20)
+        $Button.FlatAppearance.BorderSize = 1
+        $Button.FlatAppearance.BorderColor = [Drawing.Color]::FromArgb(229,161,93)
+        $Button.FlatAppearance.MouseOverBackColor = [Drawing.Color]::FromArgb(255,247,237)
+        $Button.FlatAppearance.MouseDownBackColor = [Drawing.Color]::FromArgb(255,237,213)
+    } elseif ($Kind -eq 'Soft') {
+        $normalBackColor = [Drawing.Color]::FromArgb(224,247,245)
+        $normalForeColor = [Drawing.Color]::FromArgb(0,105,99)
+        $Button.FlatAppearance.BorderSize = 1
+        $Button.FlatAppearance.BorderColor = [Drawing.Color]::FromArgb(134,203,196)
+        $Button.FlatAppearance.MouseOverBackColor = [Drawing.Color]::FromArgb(204,239,235)
+        $Button.FlatAppearance.MouseDownBackColor = [Drawing.Color]::FromArgb(183,228,222)
     } else {
         $normalBackColor = [Drawing.Color]::White
         $normalForeColor = [Drawing.Color]::FromArgb(28,37,44)
@@ -240,8 +294,46 @@ function Set-PucButtonStyle($Button, [ValidateSet('Primary','Secondary')][string
     & $updateEnabledStyle
 }
 
+function Set-PucUpdateIconStyle($Button) {
+    $Button.AutoSize = $false
+    $Button.FlatStyle = [Windows.Forms.FlatStyle]::Flat
+    $Button.FlatAppearance.BorderSize = 0
+    $Button.FlatAppearance.MouseOverBackColor = [Drawing.Color]::FromArgb(240,250,249)
+    $Button.FlatAppearance.MouseDownBackColor = [Drawing.Color]::FromArgb(214,234,232)
+    $Button.UseVisualStyleBackColor = $false
+    $Button.TextAlign = [Drawing.ContentAlignment]::MiddleCenter
+    $Button.Padding = New-Object Windows.Forms.Padding(0)
+    $Button.Font = New-Object Drawing.Font('Segoe MDL2 Assets',14)
+    $updateEnabledStyle = {
+        $Button.BackColor = [Drawing.Color]::White
+        if ($Button.Enabled) {
+            $Button.ForeColor = [Drawing.Color]::FromArgb(0,105,99)
+            $Button.Cursor = [Windows.Forms.Cursors]::Hand
+        } else {
+            $Button.ForeColor = [Drawing.Color]::FromArgb(153,162,169)
+            $Button.Cursor = [Windows.Forms.Cursors]::Default
+        }
+    }.GetNewClosure()
+    $Button.Add_EnabledChanged($updateEnabledStyle)
+    & $updateEnabledStyle
+}
+
+function Get-PucSkillUpdateDisplayText {
+    $prefix = '上次更新：'
+    $statePath = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'puc-config\update-state.json'
+    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) { return ($prefix + '暂无记录') }
+    try {
+        $state = Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json
+        $entry = $state.repository
+        if ($null -eq $entry -or [string]::IsNullOrWhiteSpace([string]$entry.updatedAt)) { $entry = $state.skills.'puc-config' }
+        if ($null -eq $entry -or [string]::IsNullOrWhiteSpace([string]$entry.updatedAt)) { return ($prefix + '暂无记录') }
+        $updatedAt = [DateTimeOffset]::Parse([string]$entry.updatedAt).ToLocalTime()
+        return ($prefix + $updatedAt.ToString('yyyy-MM-dd HH:mm:ss'))
+    } catch { return ($prefix + '暂无记录') }
+}
+
 if ($SelfTest) {
-    if ($script:Operations.Count -ne 17) { throw '操作目录数量不正确。' }
+    if ($script:Operations.Count -ne 18) { throw '操作目录数量不正确。' }
     if (-not $script:ShowEnvironmentPasswordsByDefault) { throw '新增环境的显示密码选项必须默认勾选。' }
     if ($script:DefaultNewAccountPassword -ne '888') { throw '新账号及重置默认密码必须默认为 888。' }
     Assert-NewEnvironmentPasswords -AdminPassword 'admin-test-password' -NewAccountPassword $script:DefaultNewAccountPassword
@@ -250,7 +342,7 @@ if ($SelfTest) {
     if (-not $emptyNewAccountPasswordRejected) { throw '新增环境未拒绝空的新账号及重置默认密码。' }
     $keys = @($script:Operations.Key | Sort-Object -Unique)
     if ($keys.Count -ne $script:Operations.Count) { throw '操作目录中存在重复键。' }
-    $expectedKeys = @('create','reset','reset-query','reset-file','complete','update','personnel-prefix','personnel-exact','policy','force-login','config-export','config-import','license-export','license-import','permission-import','incident-levels','android-upgrade')
+    $expectedKeys = @('create','reset','reset-query','reset-file','complete','update','personnel-prefix','personnel-exact','role','policy','force-login','config-export','config-import','license-export','license-import','permission-import','incident-levels','android-upgrade')
     foreach ($key in $expectedKeys) { if ($key -notin $keys) { throw "操作目录缺少 $key。" } }
     foreach ($key in $expectedKeys) {
         $action = if ($key -in @('policy','force-login')) {'Status'} else {''}
@@ -265,6 +357,11 @@ if ($SelfTest) {
     if (@($script:Operations | Where-Object Key -eq 'create').Fields.Key -contains 'startSequence') {
         throw '调度账号创建不得询问起始序号。'
     }
+    $createOperation = @($script:Operations | Where-Object Key -eq 'create')[0]
+    $createPrefixField = @($createOperation.Fields | Where-Object Key -eq 'prefix')[0]
+    $createCountField = @($createOperation.Fields | Where-Object Key -eq 'count')[0]
+    if (-not [string]::IsNullOrEmpty([string]$createPrefixField.Default)) { throw '新增调度账号的账号前缀不得设置默认值。' }
+    if ([int]$createCountField.Default -ne 1) { throw '新增调度账号的创建数量必须默认为 1。' }
     foreach ($personnelOperation in @($script:Operations | Where-Object Key -in @('personnel-prefix','personnel-exact'))) {
         $typeField = @($personnelOperation.Fields | Where-Object Key -eq 'numberType')
         $dispatcherField = @($personnelOperation.Fields | Where-Object Key -eq 'dispatcherAccount')
@@ -280,7 +377,7 @@ if ($SelfTest) {
     $fullUrlRejected = $false
     try { [void](ConvertTo-PucBaseUrlFromIp 'https://10.161.30.163:16890') } catch { $fullUrlRejected = $true }
     if (-not $fullUrlRejected) { throw '新增环境不得接受包含协议或端口的服务地址。' }
-    $workflowScripts = @('Initialize-PucConfig.ps1','Repair-PucEnvironmentNames.ps1','Get-PucEnvironmentVersion.ps1','Invoke-PucAccounts.ps1','Invoke-PucAccountPasswordReset.ps1','Invoke-PucAccountPasswordResetBatch.ps1','Invoke-PucAccountCompletion.ps1','Invoke-PucAccountUpdate.ps1','Invoke-PucPersonnel.ps1','Invoke-PucDispatcherSearch.ps1','Invoke-PucFirstLoginPasswordCheck.ps1','Invoke-PucForceLogin.ps1','Invoke-PucConfigTransfer.ps1','Invoke-PucLicense.ps1','Invoke-PucPermissionMenuImport.ps1','Invoke-PucIncidentAlarmLevels.ps1','Invoke-AndroidUpgradePackage.ps1','PucResultRenderer.psm1')
+    $workflowScripts = @('Initialize-PucConfig.ps1','Repair-PucEnvironmentNames.ps1','Get-PucEnvironmentVersion.ps1','Invoke-PucAccounts.ps1','Invoke-PucAccountPasswordReset.ps1','Invoke-PucAccountPasswordResetBatch.ps1','Invoke-PucAccountCompletion.ps1','Invoke-PucAccountUpdate.ps1','Invoke-PucPersonnel.ps1','Invoke-PucRole.ps1','Invoke-PucSkillUpdate.ps1','Invoke-PucDispatcherSearch.ps1','Invoke-PucFirstLoginPasswordCheck.ps1','Invoke-PucForceLogin.ps1','Invoke-PucConfigTransfer.ps1','Invoke-PucLicense.ps1','Invoke-PucPermissionMenuImport.ps1','Invoke-PucIncidentAlarmLevels.ps1','Invoke-AndroidUpgradePackage.ps1','PucResultRenderer.psm1')
     foreach ($workflowScript in $workflowScripts) {
         if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $workflowScript) -PathType Leaf)) { throw "工作流脚本不存在：$workflowScript" }
     }
@@ -294,8 +391,12 @@ if ($SelfTest) {
     $successModel = New-PucResultModel -Outputs @('{"status":"exported","environment":"10.161.30.163","configFilePath":"C:\\export\\config.json","configBytes":2048,"licenseFilePath":"C:\\export\\license.enc","licenseBytes":512,"token":"DO-NOT-SHOW"}') -OperationLabel '导出配置' -Environment '10.161.30.163' -Stage 'config-export' -StartedAt $resultStartedAt -ViewState Finished -ExitCode 0
     if ($successModel.Kind -ne 'Success' -or $successModel.RawText -match 'DO-NOT-SHOW') { throw '成功结果渲染或敏感字段脱敏验证失败。' }
     if (@($successModel.Fields | Where-Object Name -eq 'configFilePath').Count -ne 1) { throw '文件结果摘要验证失败。' }
+    $latestSkillModel = New-PucResultModel -Outputs @('{"status":"latest","scope":"repository","localCommit":"fc4f71c","remoteCommit":"fc4f71c","packageCount":5,"packageNames":["puc-config","get-business-log"],"updated":false}') -OperationLabel '更新版本包' -Environment '' -Stage '检查版本' -StartedAt $resultStartedAt -ViewState Finished -ExitCode 0
+    if ($latestSkillModel.Kind -ne 'Success' -or $latestSkillModel.StatusText -ne '已是最新版本' -or @($latestSkillModel.Fields | Where-Object { $_.Name -eq 'message' -and $_.Value -eq '仓库下全部版本包已是最新版本，无需更新。' }).Count -ne 1) { throw '最新版本友好提示渲染失败。' }
     $partialModel = New-PucResultModel -Outputs @('{"status":"partial-failure","environment":"10.161.30.163","succeeded":1,"failed":1,"results":[{"account":"mhw1","status":"password-reset"},{"account":"mhw2","status":"failed","reason":"request failed"}]}') -OperationLabel '批量重置密码' -Environment '10.161.30.163' -Stage 'batch-reset-live' -StartedAt $resultStartedAt -ViewState Finished -ExitCode 1
     if ($partialModel.Kind -ne 'Warning' -or @($partialModel.Rows).Count -ne 2) { throw '部分失败结果表格验证失败。' }
+    $noMatchModel = New-PucResultModel -Outputs @('{"status":"no-match","query":"missing","accountCount":0,"accounts":[],"message":"未查询到匹配的调度账号，请调整查询关键字后重试。"}') -OperationLabel '批量重置密码（按查询）' -Environment '10.161.30.163' -Stage 'batch-reset-preview' -StartedAt $resultStartedAt -ViewState Finished -ExitCode 0
+    if ($noMatchModel.Kind -ne 'Neutral' -or $noMatchModel.StatusText -ne '查询结果为空' -or @($noMatchModel.Fields | Where-Object { $_.Name -eq 'message' -and $_.Value -match '未查询到匹配的调度账号' }).Count -ne 1) { throw '空查询结果友好提示渲染失败。' }
     $stageModel = New-PucResultModel -Outputs @('{"status":"previewed","accounts":[{"account":"mhw1"},{"account":"mhw2"}]}','{"status":"password-reset","results":[{"account":"mhw1","status":"password-reset"},{"account":"mhw2","status":"password-reset"}]}') -OperationLabel '批量重置密码' -Environment '10.161.30.163' -Stage 'batch-reset-live' -StartedAt $resultStartedAt -ViewState Finished -ExitCode 0
     if (@($stageModel.Rows).Count -ne 2 -or @($stageModel.Rows | Where-Object group -eq '账号').Count -ne 0) { throw '执行结果不得混合预检与最终阶段数据。' }
     $nodeModel = New-PucResultModel -Outputs @('{"status":"previewed","results":[{"alias":"test","status":"planned"}]}') -OperationLabel '新增人员' -Environment '10.161.30.163' -ExecutionNodes @([pscustomobject]@{Label='人员新增预检';Status='completed'},[pscustomobject]@{Label='新增人员';Status='running'}) -StartedAt $resultStartedAt -ViewState Progress
@@ -332,6 +433,168 @@ if ($SelfTest) {
 }
 
 Import-Module (Join-Path $PSScriptRoot 'PucConfig.psm1') -Force
+
+function Initialize-PucLauncherConfigRoot {
+    param(
+        [string]$SettingsPath = (Get-PucSettingsPath),
+        [string]$DefaultRoot = (Get-PucDefaultConfigRoot)
+    )
+    $settingsPath = [IO.Path]::GetFullPath($SettingsPath)
+    $defaultRoot = [IO.Path]::GetFullPath($DefaultRoot)
+    $configuredRoot = ''
+    try {
+        $settings = Read-PucJson -Path $settingsPath -Default $null
+        if ($null -ne $settings -and -not [string]::IsNullOrWhiteSpace([string]$settings.configRoot)) {
+            $candidate = [string]$settings.configRoot
+            if ([IO.Path]::IsPathRooted($candidate)) { $configuredRoot = [IO.Path]::GetFullPath($candidate) }
+        }
+    } catch { $configuredRoot = '' }
+
+    if (-not [string]::IsNullOrWhiteSpace($configuredRoot) -and (Test-Path -LiteralPath $configuredRoot -PathType Container)) {
+        return [pscustomobject]@{ConfigRoot=$configuredRoot;Initialized=$false;SettingsPath=$settingsPath}
+    }
+
+    New-Item -ItemType Directory -Force -Path $defaultRoot | Out-Null
+    Write-PucJson -Path $settingsPath -Value ([ordered]@{configRoot=[IO.Path]::GetFullPath($defaultRoot)})
+    return [pscustomobject]@{ConfigRoot=[IO.Path]::GetFullPath($defaultRoot);Initialized=$true;SettingsPath=$settingsPath}
+}
+
+function Assert-PucLauncherConfigDocument($Document, [string]$Path) {
+    if ($null -eq $Document -or $null -eq $Document.PSObject.Properties['environments']) {
+        throw "配置文件缺少 environments 结构：$Path"
+    }
+}
+
+function Resolve-PucLauncherConfigRootFromSelection([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not [IO.Path]::IsPathRooted($Path)) { throw '配置存放位置必须是绝对路径。' }
+    $selectedPath = [IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $selectedLeaf = Split-Path -Leaf $selectedPath
+    $selectedParent = Split-Path -Parent $selectedPath
+    if ($selectedLeaf -ieq 'puc-config' -and (Split-Path -Leaf $selectedParent) -ieq 'agentSkillLocalConfig') { return $selectedPath }
+    if ($selectedLeaf -ieq 'agentSkillLocalConfig') { return Join-Path $selectedPath 'puc-config' }
+    return Join-Path (Join-Path $selectedPath 'agentSkillLocalConfig') 'puc-config'
+}
+
+function Get-PucLauncherStorageSelectionPath([string]$ConfigRoot) {
+    if ([string]::IsNullOrWhiteSpace($ConfigRoot)) { return Get-PucDefaultConfigRoot | Split-Path -Parent | Split-Path -Parent }
+    $resolvedRoot = [IO.Path]::GetFullPath($ConfigRoot).TrimEnd('\')
+    $parent = Split-Path -Parent $resolvedRoot
+    if ((Split-Path -Leaf $resolvedRoot) -ieq 'puc-config' -and (Split-Path -Leaf $parent) -ieq 'agentSkillLocalConfig') {
+        return Split-Path -Parent $parent
+    }
+    return Split-Path -Parent $resolvedRoot
+}
+
+function Get-PucLauncherConfigPathActionText([string]$Action) {
+    $actionText = switch ($Action) {
+        'moved' {'配置目录及全部内容已迁移'}
+        'moved-initialized' {'配置目录及全部内容已迁移，并已初始化配置文件'}
+        'initialized' {'已在新路径初始化配置文件'}
+        'selected-existing' {'已切换到目标路径中的配置文件'}
+        default {'配置路径未变化'}
+    }
+    return [string]$actionText
+}
+
+function Get-PucLauncherConfigPathResultJson([string]$Action, [string]$ConfigRoot) {
+    $resolvedRoot = [IO.Path]::GetFullPath($ConfigRoot)
+    $actionText = Get-PucLauncherConfigPathActionText $Action
+    return ([ordered]@{
+        status='updated'
+        message='配置路径设置成功'
+        operationResult=$actionText
+        configRoot=$resolvedRoot
+    } | ConvertTo-Json -Compress)
+}
+
+function Set-PucLauncherConfigRoot {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$CurrentRoot = '',
+        [string]$SettingsPath = (Get-PucSettingsPath),
+        [string]$TemplatePath = (Join-Path $PSScriptRoot '..\assets\config.template.json')
+    )
+    $selectedRoot = Resolve-PucLauncherConfigRootFromSelection -Path $Path
+    if ([string]::IsNullOrWhiteSpace($CurrentRoot)) {
+        try { $CurrentRoot = Get-PucConfigRoot } catch { $CurrentRoot = '' }
+    }
+    $resolvedCurrentRoot = if ([string]::IsNullOrWhiteSpace($CurrentRoot)) {''} else {[IO.Path]::GetFullPath($CurrentRoot)}
+    $resolvedSettingsPath = [IO.Path]::GetFullPath($SettingsPath)
+    $resolvedTemplatePath = [IO.Path]::GetFullPath($TemplatePath)
+    $sourceConfigPath = if ([string]::IsNullOrWhiteSpace($resolvedCurrentRoot)) {''} else {Join-Path $resolvedCurrentRoot 'config.json'}
+    $targetConfigPath = Join-Path $selectedRoot 'config.json'
+    $sameRoot = -not [string]::IsNullOrWhiteSpace($resolvedCurrentRoot) -and [string]::Equals($resolvedCurrentRoot.TrimEnd('\'),$selectedRoot.TrimEnd('\'),[StringComparison]::OrdinalIgnoreCase)
+    $sourceRootExists = -not [string]::IsNullOrWhiteSpace($resolvedCurrentRoot) -and (Test-Path -LiteralPath $resolvedCurrentRoot -PathType Container)
+    $sourceConfigExists = $sourceRootExists -and (Test-Path -LiteralPath $sourceConfigPath -PathType Leaf)
+    $targetRootExists = Test-Path -LiteralPath $selectedRoot -PathType Container
+    $targetConfigExists = Test-Path -LiteralPath $targetConfigPath -PathType Leaf
+    $movedRoot = $false
+    $initializedConfig = $false
+    $createdTargetRoot = $false
+    $targetWasEmpty = $false
+    $action = 'unchanged'
+    try {
+        if ($sourceConfigExists) {
+            $sourceDocument = Read-PucJson -Path $sourceConfigPath -Default $null
+            Assert-PucLauncherConfigDocument -Document $sourceDocument -Path $sourceConfigPath
+        }
+
+        if ($sourceRootExists -and -not $sameRoot) {
+            if ($targetRootExists) {
+                $targetWasEmpty = @((Get-ChildItem -LiteralPath $selectedRoot -Force)).Count -eq 0
+                if (-not $targetWasEmpty) { throw "目标配置目录已存在内容，未执行合并或覆盖：$selectedRoot" }
+                Remove-Item -LiteralPath $selectedRoot -Force
+            }
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $selectedRoot) | Out-Null
+            Move-Item -LiteralPath $resolvedCurrentRoot -Destination $selectedRoot
+            $movedRoot = $true
+            $targetRootExists = $true
+            $targetConfigExists = Test-Path -LiteralPath $targetConfigPath -PathType Leaf
+            $action = 'moved'
+        } elseif (-not $targetRootExists) {
+            New-Item -ItemType Directory -Force -Path $selectedRoot | Out-Null
+            $createdTargetRoot = $true
+            $targetRootExists = $true
+        }
+
+        if ($targetConfigExists) {
+            $targetDocument = Read-PucJson -Path $targetConfigPath -Default $null
+            Assert-PucLauncherConfigDocument -Document $targetDocument -Path $targetConfigPath
+            if (-not $movedRoot -and -not $sameRoot) { $action = 'selected-existing' }
+        } else {
+            if (-not (Test-Path -LiteralPath $resolvedTemplatePath -PathType Leaf)) { throw "配置模板不存在：$resolvedTemplatePath" }
+            $template = Read-PucJson -Path $resolvedTemplatePath -Default $null
+            Assert-PucLauncherConfigDocument -Document $template -Path $resolvedTemplatePath
+            Write-PucJson -Path $targetConfigPath -Value $template
+            $initializedConfig = $true
+            $action = if ($movedRoot) {'moved-initialized'} else {'initialized'}
+        }
+        Write-PucJson -Path $resolvedSettingsPath -Value ([ordered]@{configRoot=$selectedRoot})
+        if ($movedRoot) {
+            $oldStructureParent = Split-Path -Parent $resolvedCurrentRoot
+            if ((Split-Path -Leaf $oldStructureParent) -ieq 'agentSkillLocalConfig' -and (Test-Path -LiteralPath $oldStructureParent -PathType Container) -and @((Get-ChildItem -LiteralPath $oldStructureParent -Force)).Count -eq 0) {
+                Remove-Item -LiteralPath $oldStructureParent -Force -ErrorAction SilentlyContinue
+            }
+        }
+    } catch {
+        $migrationError = $_.Exception.Message
+        try {
+            if ($movedRoot -and (Test-Path -LiteralPath $selectedRoot -PathType Container) -and -not (Test-Path -LiteralPath $resolvedCurrentRoot)) {
+                if ($initializedConfig -and (Test-Path -LiteralPath $targetConfigPath -PathType Leaf)) { Remove-Item -LiteralPath $targetConfigPath -Force -ErrorAction Stop }
+                Move-Item -LiteralPath $selectedRoot -Destination $resolvedCurrentRoot -ErrorAction Stop
+                if ($targetWasEmpty) { New-Item -ItemType Directory -Force -Path $selectedRoot | Out-Null }
+            } elseif ($createdTargetRoot -and (Test-Path -LiteralPath $selectedRoot -PathType Container)) {
+                Remove-Item -LiteralPath $selectedRoot -Recurse -Force -ErrorAction Stop
+            } elseif ($initializedConfig -and (Test-Path -LiteralPath $targetConfigPath -PathType Leaf)) {
+                Remove-Item -LiteralPath $targetConfigPath -Force -ErrorAction Stop
+            }
+        } catch {
+            throw "配置路径更新失败，且配置目录回滚失败。原始错误：$migrationError；回滚错误：$($_.Exception.Message)"
+        }
+        throw $migrationError
+    }
+    return [pscustomobject]@{ConfigRoot=$selectedRoot;ConfigPath=$targetConfigPath;StoragePath=(Get-PucLauncherStorageSelectionPath $selectedRoot);Action=$action;RestartRequired=$false}
+}
 $script:LauncherPath = Join-Path $PSScriptRoot 'Invoke-PucScript.cmd'
 $script:ExecutionState = $null
 $script:FieldControls = @{}
@@ -433,14 +696,25 @@ $form.FormBorderStyle = 'Sizable'
 $form.MaximizeBox = $true
 $form.MinimizeBox = $true
 $form.AutoScaleMode = 'Dpi'
-$form.ClientSize = New-Object Drawing.Size(760,520)
-$form.MinimumSize = New-Object Drawing.Size(776,600)
+$form.ClientSize = New-Object Drawing.Size(860,520)
+$form.MinimumSize = New-Object Drawing.Size(876,600)
 $form.BackColor = [Drawing.Color]::FromArgb(246,248,250)
 $form.Font = New-Object Drawing.Font('Microsoft YaHei UI',9)
+$launcherIcon = $null
+$launcherIconPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\assets\puc-config.ico'))
+if (Test-Path -LiteralPath $launcherIconPath -PathType Leaf) {
+    $sourceIcon = New-Object Drawing.Icon($launcherIconPath)
+    try { $launcherIcon = [Drawing.Icon]$sourceIcon.Clone() } finally { $sourceIcon.Dispose() }
+    $form.Icon = $launcherIcon
+    $form.ShowIcon = $true
+}
+[void]$form.Handle
+$taskbarIconResource = "$launcherIconPath,0"
+[PucTaskbarIdentity]::ConfigureWindow($form.Handle,$script:PucAppUserModelId,$taskbarIconResource)
 
 $header = New-Object Windows.Forms.Panel
 $header.Location = New-Object Drawing.Point(0,0)
-$header.Size = New-Object Drawing.Size(760,58)
+$header.Size = New-Object Drawing.Size(860,58)
 $header.Anchor = 'Top,Left,Right'
 $header.BackColor = [Drawing.Color]::White
 $form.Controls.Add($header)
@@ -453,16 +727,38 @@ $title.AutoSize = $true
 $title.Location = New-Object Drawing.Point(24,15)
 $header.Controls.Add($title)
 
+$lastUpdateLabel = New-Object Windows.Forms.Label
+$lastUpdateLabel.Text = Get-PucSkillUpdateDisplayText
+$lastUpdateLabel.AutoSize = $false
+$lastUpdateLabel.ForeColor = [Drawing.Color]::FromArgb(92,102,110)
+$lastUpdateLabel.Location = New-Object Drawing.Point(486,17)
+$lastUpdateLabel.Size = New-Object Drawing.Size(310,26)
+$lastUpdateLabel.Anchor = 'Top,Right'
+$lastUpdateLabel.TextAlign = [Drawing.ContentAlignment]::MiddleRight
+$header.Controls.Add($lastUpdateLabel)
+
+$updateButton = New-Object Windows.Forms.Button
+$updateButton.Text = [string][char]0xE896
+$updateButton.AccessibleName = '更新版本包'
+$updateButton.Location = New-Object Drawing.Point(808,11)
+$updateButton.Size = New-Object Drawing.Size(38,38)
+$updateButton.Anchor = 'Top,Right'
+Set-PucUpdateIconStyle $updateButton
+$header.Controls.Add($updateButton)
+
+$headerToolTip = New-Object Windows.Forms.ToolTip
+$headerToolTip.SetToolTip($updateButton,'更新版本包')
+
 $accent = New-Object Windows.Forms.Panel
 $accent.Location = New-Object Drawing.Point(0,55)
-$accent.Size = New-Object Drawing.Size(760,3)
+$accent.Size = New-Object Drawing.Size(860,3)
 $accent.Anchor = 'Left,Right,Bottom'
 $accent.BackColor = [Drawing.Color]::FromArgb(0,134,126)
 $header.Controls.Add($accent)
 
 $selectionPanel = New-Object Windows.Forms.Panel
 $selectionPanel.Location = New-Object Drawing.Point(0,58)
-$selectionPanel.Size = New-Object Drawing.Size(760,104)
+$selectionPanel.Size = New-Object Drawing.Size(860,126)
 $selectionPanel.Anchor = 'Top,Left,Right'
 $selectionPanel.BackColor = [Drawing.Color]::FromArgb(246,248,250)
 $form.Controls.Add($selectionPanel)
@@ -489,31 +785,40 @@ $selectionPanel.Controls.Add($operationLabel)
 $operationBox = New-Object Windows.Forms.ComboBox
 $operationBox.DropDownStyle = 'DropDownList'
 $operationBox.Location = New-Object Drawing.Point(250,38)
-$operationBox.Size = New-Object Drawing.Size(278,28)
+$operationBox.Size = New-Object Drawing.Size(242,28)
 $operationBox.DisplayMember = 'Label'
 foreach ($operation in $script:Operations) { $operationBox.Items.Add($operation) | Out-Null }
 $operationBox.SelectedIndex = 0
 $selectionPanel.Controls.Add($operationBox)
 
+$configPathButton = New-Object Windows.Forms.Button
+$configPathButton.Text = '设置配置路径'
+$configPathButton.AccessibleName = '设置配置文件路径'
+$configPathButton.Location = New-Object Drawing.Point(504,35)
+$configPathButton.Size = New-Object Drawing.Size(108,34)
+Set-PucButtonStyle $configPathButton 'OutlineWarning'
+$selectionPanel.Controls.Add($configPathButton)
+$headerToolTip.SetToolTip($configPathButton,'设置配置文件路径')
+
 $addEnvironmentButton = New-Object Windows.Forms.Button
 $addEnvironmentButton.Text = '新增环境'
-$addEnvironmentButton.Location = New-Object Drawing.Point(544,35)
-$addEnvironmentButton.Size = New-Object Drawing.Size(88,34)
-Set-PucButtonStyle $addEnvironmentButton
+$addEnvironmentButton.Location = New-Object Drawing.Point(624,35)
+$addEnvironmentButton.Size = New-Object Drawing.Size(96,34)
+Set-PucButtonStyle $addEnvironmentButton 'OutlineInfo'
 $selectionPanel.Controls.Add($addEnvironmentButton)
 
 $reloadButton = New-Object Windows.Forms.Button
 $reloadButton.Text = '刷新'
-$reloadButton.Location = New-Object Drawing.Point(644,35)
-$reloadButton.Size = New-Object Drawing.Size(88,34)
-Set-PucButtonStyle $reloadButton
+$reloadButton.Location = New-Object Drawing.Point(732,35)
+$reloadButton.Size = New-Object Drawing.Size(100,34)
+Set-PucButtonStyle $reloadButton 'OutlineTheme'
 $selectionPanel.Controls.Add($reloadButton)
 
 $addressLabel = New-Object Windows.Forms.Label
 $addressLabel.AutoSize = $false
 $addressLabel.ForeColor = [Drawing.Color]::FromArgb(92,102,110)
 $addressLabel.Location = New-Object Drawing.Point(24,76)
-$addressLabel.Size = New-Object Drawing.Size(310,22)
+$addressLabel.Size = New-Object Drawing.Size(206,22)
 $addressLabel.AutoEllipsis = $true
 $selectionPanel.Controls.Add($addressLabel)
 
@@ -521,7 +826,7 @@ $versionLabel = New-Object Windows.Forms.Label
 $versionLabel.Text = '版本：未获取'
 $versionLabel.AutoSize = $false
 $versionLabel.ForeColor = [Drawing.Color]::FromArgb(92,102,110)
-$versionLabel.Location = New-Object Drawing.Point(350,76)
+$versionLabel.Location = New-Object Drawing.Point(24,98)
 $versionLabel.Size = New-Object Drawing.Size(184,22)
 $versionLabel.AutoEllipsis = $true
 $selectionPanel.Controls.Add($versionLabel)
@@ -530,23 +835,44 @@ $versionCompatibilityWarningLabel = New-Object Windows.Forms.Label
 $versionCompatibilityWarningLabel.Text = '不同版本号上表现可能存在差异'
 $versionCompatibilityWarningLabel.AutoSize = $false
 $versionCompatibilityWarningLabel.ForeColor = [Drawing.Color]::FromArgb(192,57,43)
-$versionCompatibilityWarningLabel.Location = New-Object Drawing.Point(542,76)
+$versionCompatibilityWarningLabel.Location = New-Object Drawing.Point(216,98)
 $versionCompatibilityWarningLabel.Size = New-Object Drawing.Size(190,22)
-$versionCompatibilityWarningLabel.Anchor = 'Top,Right'
+$versionCompatibilityWarningLabel.Anchor = 'Top,Left'
 $versionCompatibilityWarningLabel.TextAlign = [Drawing.ContentAlignment]::TopLeft
 $selectionPanel.Controls.Add($versionCompatibilityWarningLabel)
 
 $versionToolTip = New-Object Windows.Forms.ToolTip
 
 $inputPanel = New-Object Windows.Forms.Panel
-$inputPanel.Location = New-Object Drawing.Point(0,162)
-$inputPanel.Size = New-Object Drawing.Size(760,0)
+$inputPanel.Location = New-Object Drawing.Point(16,184)
+$inputPanel.Size = New-Object Drawing.Size(828,0)
 $inputPanel.Anchor = 'Top,Left,Right'
 $inputPanel.BackColor = [Drawing.Color]::White
+$inputPanel.BorderStyle = [Windows.Forms.BorderStyle]::None
+$inputPanelDoubleBufferedProperty = [Windows.Forms.Control].GetProperty('DoubleBuffered',[Reflection.BindingFlags]'Instance,NonPublic')
+$inputPanelDoubleBufferedProperty.SetValue($inputPanel,$true,$null)
+$inputPanel.Add_Paint({
+    param($sender,$eventArgs)
+    if ($sender.ClientSize.Width -le 1 -or $sender.ClientSize.Height -le 1) { return }
+    $borderPen = New-Object Drawing.Pen([Drawing.Color]::FromArgb(218,224,228))
+    try { $eventArgs.Graphics.DrawRectangle($borderPen,0,0,($sender.ClientSize.Width - 1),($sender.ClientSize.Height - 1)) } finally { $borderPen.Dispose() }
+})
 $form.Controls.Add($inputPanel)
 
+$inputSectionAccent = New-Object Windows.Forms.Panel
+$inputSectionAccent.Location = New-Object Drawing.Point(24,14)
+$inputSectionAccent.Size = New-Object Drawing.Size(4,18)
+$inputSectionAccent.BackColor = [Drawing.Color]::FromArgb(0,134,126)
+
+$inputSectionLabel = New-Object Windows.Forms.Label
+$inputSectionLabel.Text = '操作参数'
+$inputSectionLabel.AutoSize = $true
+$inputSectionLabel.Font = New-Object Drawing.Font('Microsoft YaHei UI',10,[Drawing.FontStyle]::Bold)
+$inputSectionLabel.ForeColor = [Drawing.Color]::FromArgb(28,58,62)
+$inputSectionLabel.Location = New-Object Drawing.Point(36,13)
+
 $actionPanel = New-Object Windows.Forms.Panel
-$actionPanel.Location = New-Object Drawing.Point(0,162)
+$actionPanel.Location = New-Object Drawing.Point(0,184)
 $actionPanel.Size = New-Object Drawing.Size(760,62)
 $actionPanel.Anchor = 'Top,Left,Right'
 $actionPanel.BackColor = [Drawing.Color]::FromArgb(246,248,250)
@@ -572,7 +898,7 @@ $uploadButton.Location = New-Object Drawing.Point(272,14)
 $uploadButton.Size = New-Object Drawing.Size(112,34)
 $uploadButton.Enabled = $false
 $uploadButton.Visible = $false
-Set-PucButtonStyle $uploadButton 'Primary'
+Set-PucButtonStyle $uploadButton 'Upload'
 $actionPanel.Controls.Add($uploadButton)
 
 $confirmButton = New-Object Windows.Forms.Button
@@ -611,8 +937,24 @@ function Update-ActionPanelLayout {
     $statusLabel.Width = [Math]::Max(120,$actionPanel.ClientSize.Width - $statusLeft - 28)
 }
 
+function Set-PucDispatcherSearchStatus([Windows.Forms.ComboBox]$Control, [ValidateSet('Idle','Loading','Found','Empty','Failed','Selected')][string]$State, [int]$Count = 0) {
+    if ($null -eq $Control -or $Control.IsDisposed -or $Control.Tag -isnot [Windows.Forms.Label]) { return }
+    $searchStatus = [Windows.Forms.Label]$Control.Tag
+    switch ($State) {
+        'Loading' { $searchStatus.Text = '查询中...'; $searchStatus.ForeColor = [Drawing.Color]::FromArgb(45,112,176) }
+        'Found' { $searchStatus.Text = "找到 $Count 个账号"; $searchStatus.ForeColor = [Drawing.Color]::FromArgb(0,128,105) }
+        'Empty' { $searchStatus.Text = '未找到匹配账号'; $searchStatus.ForeColor = [Drawing.Color]::FromArgb(92,102,110) }
+        'Failed' { $searchStatus.Text = '查询失败'; $searchStatus.ForeColor = [Drawing.Color]::FromArgb(184,70,45) }
+        'Selected' { $searchStatus.Text = '已选择'; $searchStatus.ForeColor = [Drawing.Color]::FromArgb(0,128,105) }
+        default { $searchStatus.Text = ''; $searchStatus.ForeColor = [Drawing.Color]::FromArgb(92,102,110) }
+    }
+}
+
 function Request-DispatcherLookup([Windows.Forms.ComboBox]$Control) {
-    if ($null -ne $Control.SelectedItem -and [string]$Control.SelectedItem.Label -eq $Control.Text) { return }
+    if ($null -ne $Control.SelectedItem -and [string]$Control.SelectedItem.Label -eq $Control.Text) {
+        Set-PucDispatcherSearchStatus -Control $Control -State Selected
+        return
+    }
     $query = $Control.Text.Trim()
     if ($null -eq $script:DispatcherLookup) {
         $script:DispatcherLookup = [pscustomobject]@{Control=$Control;Query=$query;RequestedQuery='';RequestedEnvironment='';DueAt=[datetime]::Now.AddMilliseconds(400);StartedAt=[datetime]::Now;Handle=$null}
@@ -624,6 +966,11 @@ function Request-DispatcherLookup([Windows.Forms.ComboBox]$Control) {
     if ([string]::IsNullOrWhiteSpace($query)) {
         $Control.Items.Clear()
         $Control.SelectedIndex = -1
+        Set-PucDispatcherSearchStatus -Control $Control -State Idle
+    } elseif ($null -ne $script:DispatcherLookup.Handle) {
+        Set-PucDispatcherSearchStatus -Control $Control -State Loading
+    } else {
+        Set-PucDispatcherSearchStatus -Control $Control -State Idle
     }
 }
 
@@ -644,15 +991,18 @@ function Update-DispatcherLookup {
                 $control.BeginUpdate()
                 try {
                     $control.Items.Clear()
-                    foreach ($row in @($document.results)) {
+                    $rows = @($document.results)
+                    foreach ($row in $rows) {
                         [void]$control.Items.Add([pscustomobject]@{Label=[string]$row.label;Value=[string]$row.account})
                     }
                     $control.SelectedIndex = -1
                     $control.Text = $typedText
                     $control.SelectionStart = $control.Text.Length
                 } finally { $control.EndUpdate() }
+                Set-PucDispatcherSearchStatus -Control $control -State $(if ($rows.Count -gt 0) {'Found'} else {'Empty'}) -Count $rows.Count
                 if ($control.Focused -and $control.Items.Count -gt 0) { $control.DroppedDown = $true }
             } else {
+                Set-PucDispatcherSearchStatus -Control $control -State Failed
                 Show-PucStandaloneResult -OperationLabel '搜索调度账号' -Environment ([string]$lookup.RequestedEnvironment) -Stage '调度账号模糊搜索' -Outputs @($result.Text) -StartedAt ([datetime]$lookup.StartedAt) -ViewState Finished -ExitCode $result.ExitCode
                 $statusLabel.Text = '调度账号搜索失败，请查看服务状态后重试。'
                 $statusLabel.ForeColor = [Drawing.Color]::FromArgb(184,70,45)
@@ -667,9 +1017,11 @@ function Update-DispatcherLookup {
     $lookup.RequestedEnvironment = [string]$environmentBox.SelectedItem.Name
     $lookup.DueAt = [datetime]::MaxValue
     $lookup.StartedAt = [datetime]::Now
+    Set-PucDispatcherSearchStatus -Control $lookup.Control -State Loading
     try {
         $lookup.Handle = New-HiddenProcess @('Invoke-PucDispatcherSearch.ps1','-Environment',$lookup.RequestedEnvironment,'-Query',$lookup.RequestedQuery)
     } catch {
+        Set-PucDispatcherSearchStatus -Control $lookup.Control -State Failed
         Show-PucStandaloneResult -OperationLabel '搜索调度账号' -Environment ([string]$lookup.RequestedEnvironment) -Stage '调度账号模糊搜索' -Outputs @($_.Exception.Message) -StartedAt ([datetime]$lookup.StartedAt) -ViewState Finished -ExitCode 1
         $statusLabel.Text = '调度账号搜索失败，请查看详细输出。'
         $statusLabel.ForeColor = [Drawing.Color]::FromArgb(184,70,45)
@@ -751,8 +1103,9 @@ $resultGrid.ReadOnly = $true
 $resultGrid.AllowUserToAddRows = $false
 $resultGrid.AllowUserToDeleteRows = $false
 $resultGrid.AllowUserToResizeRows = $false
-$resultGrid.MultiSelect = $false
-$resultGrid.SelectionMode = [Windows.Forms.DataGridViewSelectionMode]::FullRowSelect
+$resultGrid.MultiSelect = $true
+$resultGrid.SelectionMode = [Windows.Forms.DataGridViewSelectionMode]::CellSelect
+$resultGrid.ClipboardCopyMode = [Windows.Forms.DataGridViewClipboardCopyMode]::EnableWithoutHeaderText
 $resultGrid.RowHeadersVisible = $false
 $resultGrid.BackgroundColor = [Drawing.Color]::White
 $resultGrid.BorderStyle = [Windows.Forms.BorderStyle]::None
@@ -762,6 +1115,43 @@ $resultGrid.DefaultCellStyle.WrapMode = [Windows.Forms.DataGridViewTriState]::Tr
 $resultGrid.DefaultCellStyle.SelectionBackColor = [Drawing.Color]::FromArgb(214,234,232)
 $resultGrid.DefaultCellStyle.SelectionForeColor = [Drawing.Color]::FromArgb(28,37,44)
 $resultGrid.Visible = $false
+
+$resultGridMenu = New-Object Windows.Forms.ContextMenuStrip
+$copySelectedResultMenuItem = $resultGridMenu.Items.Add('复制所选')
+$copySelectedResultMenuItem.ShortcutKeyDisplayString = 'Ctrl+C'
+$copyAllResultsMenuItem = $resultGridMenu.Items.Add('复制全部（含表头）')
+$resultGrid.ContextMenuStrip = $resultGridMenu
+$resultGrid.Add_CellMouseDown({
+    param($sender,$eventArgs)
+    if ($eventArgs.Button -ne [Windows.Forms.MouseButtons]::Right -or $eventArgs.RowIndex -lt 0 -or $eventArgs.ColumnIndex -lt 0) { return }
+    $cell = $sender.Rows[$eventArgs.RowIndex].Cells[$eventArgs.ColumnIndex]
+    if (-not $cell.Selected) {
+        $sender.ClearSelection()
+        $cell.Selected = $true
+        $sender.CurrentCell = $cell
+    }
+})
+$resultGridMenu.Add_Opening({
+    $copySelectedResultMenuItem.Enabled = $resultGrid.SelectedCells.Count -gt 0
+    $copyAllResultsMenuItem.Enabled = $resultGrid.Rows.Count -gt 0 -and $resultGrid.Columns.Count -gt 0
+})
+$copySelectedResultMenuItem.Add_Click({
+    $clipboardData = $resultGrid.GetClipboardContent()
+    if ($null -ne $clipboardData) { [Windows.Forms.Clipboard]::SetDataObject($clipboardData,$true) }
+})
+$copyAllResultsMenuItem.Add_Click({
+    $visibleColumns = @($resultGrid.Columns | Where-Object Visible | Sort-Object DisplayIndex)
+    if ($visibleColumns.Count -eq 0) { return }
+    $lines = [Collections.Generic.List[string]]::new()
+    $lines.Add((@($visibleColumns | ForEach-Object { [string]$_.HeaderText }) -join "`t"))
+    foreach ($row in @($resultGrid.Rows | Where-Object { -not $_.IsNewRow })) {
+        $values = @($visibleColumns | ForEach-Object {
+            ([string]$row.Cells[$_.Index].FormattedValue) -replace "`r?`n",' '
+        })
+        $lines.Add(($values -join "`t"))
+    }
+    [Windows.Forms.Clipboard]::SetText(($lines -join [Environment]::NewLine))
+})
 $resultTab.Controls.Add($resultGrid)
 
 $detailsBox = New-Object Windows.Forms.RichTextBox
@@ -777,7 +1167,7 @@ $detailsTab.Controls.Add($detailsBox)
 
 function Resize-FormForFields([int]$InputHeight) {
     $inputPanel.Height = $InputHeight
-    $actionY = 162 + $InputHeight
+    $actionY = 184 + $InputHeight
     $actionPanel.Top = $actionY
     $resultLabel.Top = $actionY + 70
     $resultTop = $actionY + 94
@@ -802,7 +1192,7 @@ function Get-PucStageDisplayLabel([string]$Stage) {
         'create-live'='新增账号';'create-large-live'='新增账号';'reset-preview'='密码重置预检';'reset-live'='重置密码'
         'batch-reset-preview'='批量重置预检';'batch-reset-live'='批量重置密码';'completion-preview'='账号补全预检'
         'completion-live'='补全账号信息';'update-plan'='检查变更文件';'update-preview'='账号更新预检';'update-live'='更新账号'
-        'personnel-preview'='人员新增预检';'personnel-live'='新增人员';'policy-status'='查询首次登录策略'
+        'personnel-preview'='人员新增预检';'personnel-live'='新增人员';'role-preview'='角色新增预检';'role-live'='新增角色';'policy-status'='查询首次登录策略'
         'policy-preview'='首次登录策略预检';'policy-live'='更新首次登录策略';'force-status'='查询重复登录策略'
         'force-preview'='重复登录策略预检';'force-live'='更新重复登录策略';'config-export'='导出配置和 License'
         'config-import-plan'='检查配置文件';'config-import-live'='导入配置';'license-export'='导出 License'
@@ -951,19 +1341,25 @@ function Show-PucStandaloneResult {
     Show-PucResultModel $model
 }
 
-function New-InputControl($Field, [int]$X, [int]$Y, [int]$Width) {
+function New-InputControl($Field, [int]$Index, [int]$X, [int]$Y, [int]$Width) {
     $label = New-Object Windows.Forms.Label
     $label.Text = [string]$Field.Label
     $label.AutoSize = $true
+    $label.Font = New-Object Drawing.Font('Microsoft YaHei UI',9)
+    $label.ForeColor = [Drawing.Color]::FromArgb(47,57,63)
     $label.Location = New-Object Drawing.Point($X,$Y)
     $inputPanel.Controls.Add($label)
     $controlY = $Y + 23
     $input = $null
     $additionalControls = @()
+    $searchStatus = $null
+    $browseButton = $null
     switch ([string]$Field.Kind) {
         'Text' {
             $input = New-Object Windows.Forms.TextBox
             $input.Text = [string]$Field.Default
+            $input.BorderStyle = [Windows.Forms.BorderStyle]::FixedSingle
+            $input.BackColor = [Drawing.Color]::White
             $input.Location = New-Object Drawing.Point($X,$controlY)
             $input.Size = New-Object Drawing.Size($Width,27)
         }
@@ -971,6 +1367,8 @@ function New-InputControl($Field, [int]$X, [int]$Y, [int]$Width) {
             $input = New-Object Windows.Forms.TextBox
             $input.Multiline = $true
             $input.ScrollBars = 'Vertical'
+            $input.BorderStyle = [Windows.Forms.BorderStyle]::FixedSingle
+            $input.BackColor = [Drawing.Color]::White
             $input.Location = New-Object Drawing.Point($X,$controlY)
             $input.Size = New-Object Drawing.Size($Width,54)
         }
@@ -979,6 +1377,7 @@ function New-InputControl($Field, [int]$X, [int]$Y, [int]$Width) {
             $input.Minimum = 0
             $input.Maximum = 1000
             $input.Value = [decimal]$Field.Default
+            $input.BackColor = [Drawing.Color]::White
             $input.Location = New-Object Drawing.Point($X,$controlY)
             $input.Size = New-Object Drawing.Size($Width,27)
         }
@@ -1000,19 +1399,35 @@ function New-InputControl($Field, [int]$X, [int]$Y, [int]$Width) {
                 if ([string]$input.Items[$index].Value -eq [string]$Field.Default) { $selected = $index; break }
             }
             $input.SelectedIndex = $selected
+            $input.BackColor = [Drawing.Color]::White
             $input.Location = New-Object Drawing.Point($X,$controlY)
             $input.Size = New-Object Drawing.Size($Width,28)
         }
         'SearchCombo' {
+            $searchStatus = New-Object Windows.Forms.Label
+            $searchStatus.AutoSize = $false
+            $searchStatus.Location = New-Object Drawing.Point(($X + $Width - 116),$Y)
+            $searchStatus.Size = New-Object Drawing.Size(116,19)
+            $searchStatus.TextAlign = [Drawing.ContentAlignment]::MiddleRight
+            $searchStatus.AutoEllipsis = $true
+            $searchStatus.ForeColor = [Drawing.Color]::FromArgb(92,102,110)
+            $inputPanel.Controls.Add($searchStatus)
+            $additionalControls += $searchStatus
             $input = New-Object Windows.Forms.ComboBox
             $input.DropDownStyle = 'DropDown'
             $input.DisplayMember = 'Label'
             $input.ValueMember = 'Value'
+            $input.BackColor = [Drawing.Color]::White
             $input.Location = New-Object Drawing.Point($X,$controlY)
             $input.Size = New-Object Drawing.Size($Width,28)
+            $input.Tag = $searchStatus
             $input.Add_TextUpdate({
                 param($sender,$eventArgs)
                 Request-DispatcherLookup -Control ([Windows.Forms.ComboBox]$sender)
+            })
+            $input.Add_SelectionChangeCommitted({
+                param($sender,$eventArgs)
+                Set-PucDispatcherSearchStatus -Control ([Windows.Forms.ComboBox]$sender) -State Selected
             })
         }
         'File' {
@@ -1024,6 +1439,7 @@ function New-InputControl($Field, [int]$X, [int]$Y, [int]$Width) {
             $browse.Text = '选择...'
             $browse.Location = New-Object Drawing.Point(($X + $Width - 74),($controlY - 3))
             $browse.Size = New-Object Drawing.Size(74,32)
+            $browseButton = $browse
             Set-PucButtonStyle $browse
             $textBox = $input
             $filter = [string]$Field.Filter
@@ -1045,6 +1461,7 @@ function New-InputControl($Field, [int]$X, [int]$Y, [int]$Width) {
             $browse.Text = '选择...'
             $browse.Location = New-Object Drawing.Point(($X + $Width - 74),($controlY - 3))
             $browse.Size = New-Object Drawing.Size(74,32)
+            $browseButton = $browse
             Set-PucButtonStyle $browse
             $textBox = $input
             $browse.Add_Click({
@@ -1072,11 +1489,44 @@ function New-InputControl($Field, [int]$X, [int]$Y, [int]$Width) {
         default { throw "不支持的字段类型：$($Field.Kind)" }
     }
     $inputPanel.Controls.Add($input)
-    $script:FieldControls[$Field.Key] = [pscustomobject]@{Kind=$Field.Kind;Input=$input;Label=$label;AdditionalControls=$additionalControls}
+    $script:FieldControls[$Field.Key] = [pscustomobject]@{Kind=$Field.Kind;LayoutIndex=$Index;Input=$input;Label=$label;SearchStatus=$searchStatus;BrowseButton=$browseButton;AdditionalControls=$additionalControls}
 }
 
+function Update-PucInputFieldLayout {
+    if ($null -eq $script:FieldControls -or $script:FieldControls.Count -eq 0) { return }
+    $horizontalPadding = 24
+    $columnGap = 16
+    $columnWidth = [Math]::Max(180,[Math]::Floor(($inputPanel.ClientSize.Width - ($horizontalPadding * 2) - $columnGap) / 2))
+    foreach ($entry in @($script:FieldControls.Values)) {
+        $column = [int]$entry.LayoutIndex % 2
+        $x = $horizontalPadding + ($column * ($columnWidth + $columnGap))
+        $entry.Label.Left = $x
+        $entry.Input.Left = $x
+        switch ([string]$entry.Kind) {
+            {$_ -in @('Text','Multiline','Number','Combo','SearchCombo','Radio')} {
+                $entry.Input.Width = $columnWidth
+            }
+            {$_ -in @('File','Folder')} {
+                $entry.Input.Width = [Math]::Max(96,($columnWidth - 82))
+                if ($null -ne $entry.BrowseButton) { $entry.BrowseButton.Left = $x + $columnWidth - 74 }
+            }
+        }
+        if ($null -ne $entry.SearchStatus) { $entry.SearchStatus.Left = $x + $columnWidth - $entry.SearchStatus.Width }
+    }
+}
+
+$script:InputPanelResizeInvalidationCount = 0
+$inputPanel.Add_SizeChanged({
+    param($sender,$eventArgs)
+    $sender.Invalidate()
+    $script:InputPanelResizeInvalidationCount++
+    Update-PucInputFieldLayout
+})
+
 function Rebuild-Inputs {
-    $script:LastUpgradePackagePath = ''
+$script:LastUpgradePackagePath = ''
+$script:SkillUpdateHandle = $null
+$script:SkillUpdateStartedAt = $null
     $uploadButton.Enabled = $false
     Update-ActionPanelLayout
     $inputPanel.SuspendLayout()
@@ -1089,16 +1539,21 @@ function Rebuild-Inputs {
         $inputPanel.ResumeLayout()
         return
     }
+    $inputPanel.Controls.Add($inputSectionAccent)
+    $inputPanel.Controls.Add($inputSectionLabel)
     $rowHeight = 66
+    $columnGap = 16
+    $columnWidth = [Math]::Max(180,[Math]::Floor(($inputPanel.ClientSize.Width - 48 - $columnGap) / 2))
     for ($index = 0; $index -lt $fields.Count; $index++) {
         $column = $index % 2
         $row = [Math]::Floor($index / 2)
-        $x = if ($column -eq 0) {24} else {386}
-        New-InputControl -Field $fields[$index] -X $x -Y (12 + ($row * $rowHeight)) -Width 346
+        $x = 24 + ($column * ($columnWidth + $columnGap))
+        New-InputControl -Field $fields[$index] -Index $index -X $x -Y (42 + ($row * $rowHeight)) -Width $columnWidth
     }
     $rows = [Math]::Ceiling($fields.Count / 2)
-    Resize-FormForFields (20 + ($rows * $rowHeight))
-    $inputPanel.ResumeLayout()
+    Resize-FormForFields (42 + ($rows * $rowHeight))
+    Update-PucInputFieldLayout
+    $inputPanel.ResumeLayout($true)
 }
 
 function Set-ControlsEnabled([bool]$Enabled) {
@@ -1106,6 +1561,8 @@ function Set-ControlsEnabled([bool]$Enabled) {
     $operationBox.Enabled = $Enabled
     $addEnvironmentButton.Enabled = $Enabled
     $reloadButton.Enabled = $Enabled
+    $updateButton.Enabled = $Enabled -and $null -eq $script:SkillUpdateHandle
+    $configPathButton.Enabled = $Enabled
     $runButton.Enabled = $Enabled
     $clearButton.Enabled = $Enabled
     foreach ($entry in $script:FieldControls.Values) {
@@ -1182,6 +1639,13 @@ function Update-EnvironmentVersionLookup {
 }
 
 function Update-EnvironmentAddress {
+    foreach ($entry in @($script:FieldControls.Values | Where-Object Kind -eq 'SearchCombo')) {
+        $entry.Input.Items.Clear()
+        $entry.Input.SelectedIndex = -1
+        $entry.Input.Text = ''
+        Set-PucDispatcherSearchStatus -Control $entry.Input -State Idle
+    }
+    if ($null -ne $script:DispatcherLookup) { $script:DispatcherLookup.Control = $null; $script:DispatcherLookup.Query = '' }
     if ($null -eq $environmentBox.SelectedItem) { $addressLabel.Text = ''; Request-EnvironmentVersion ''; return }
     $addressLabel.Text = [string]$environmentBox.SelectedItem.BaseUrl
     $versionLabel.ForeColor = [Drawing.Color]::FromArgb(92,102,110)
@@ -1434,6 +1898,13 @@ function Start-RequestedWorkflow {
             $state.Data.BaseArguments=@($arguments)
             Start-Stage 'personnel-preview' (@($arguments)+@('-DryRun'))
         }
+        'role' {
+            $roleAlias=[string](Get-FieldValue 'roleAlias');Assert-SafeArgument $roleAlias '角色名称'
+            if([string]::IsNullOrWhiteSpace($roleAlias)){throw '角色名称不能为空。'}
+            $arguments=@('Invoke-PucRole.ps1','-Environment',$environment,'-RoleAlias',$roleAlias)
+            $state.Data.BaseArguments=@($arguments);$state.Data.RoleAlias=$roleAlias
+            Start-Stage 'role-preview' (@($arguments)+@('-DryRun'))
+        }
         'policy' {
             $action=[string](Get-FieldValue 'action');$state.Data.Action=$action
             $arguments=@('Invoke-PucFirstLoginPasswordCheck.ps1','-Environment',$environment,'-Action',$action,'-DryRun')
@@ -1464,11 +1935,86 @@ function Start-RequestedWorkflow {
     }
 }
 
+function Start-SkillUpdate {
+    if ($null -ne $script:SkillUpdateHandle) { return }
+    $script:SkillUpdateStartedAt = [datetime]::Now
+    try {
+        Set-ControlsEnabled $false
+        Clear-PucResultView
+        $statusLabel.Text = '正在检查远端更新...'
+        $statusLabel.ForeColor = [Drawing.Color]::FromArgb(92,102,110)
+        $skillPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+        $script:SkillUpdateHandle = New-HiddenProcess @('Invoke-PucSkillUpdate.ps1','-SkillPath',$skillPath,'-Mode','Apply')
+    } catch {
+        $script:SkillUpdateHandle = $null
+        Set-ControlsEnabled $true
+        Show-PucStandaloneResult -OperationLabel '更新版本包' -Environment '' -Stage '检查并更新版本包' -Outputs @($_.Exception.Message) -StartedAt $script:SkillUpdateStartedAt -ViewState Finished -ExitCode 1
+        $statusLabel.Text = '更新失败'
+        $statusLabel.ForeColor = [Drawing.Color]::FromArgb(184,70,45)
+    }
+}
+
+function Complete-SkillUpdate {
+    $handle = $script:SkillUpdateHandle
+    $result = Complete-HiddenProcess $handle
+    $script:SkillUpdateHandle = $null
+    $json = Get-LastJsonObject $result.Text
+    Show-PucStandaloneResult -OperationLabel '更新版本包' -Environment '' -Stage '检查并更新版本包' -Outputs @($(if ([string]::IsNullOrWhiteSpace($result.Text)) {'（无输出）'} else {$result.Text})) -StartedAt $script:SkillUpdateStartedAt -ViewState Finished -ExitCode $result.ExitCode
+    if ($result.ExitCode -ne 0) {
+        $statusLabel.Text = '更新失败'
+        $statusLabel.ForeColor = [Drawing.Color]::FromArgb(184,70,45)
+        Set-ControlsEnabled $true
+        return
+    }
+    if ([string]$json.status -eq 'staged') {
+        $workerPath=[IO.Path]::GetFullPath([string]$json.workerPath)
+        $manifestPath=[IO.Path]::GetFullPath([string]$json.manifestPath)
+        if(-not(Test-Path -LiteralPath $workerPath -PathType Leaf)-or-not(Test-Path -LiteralPath $manifestPath -PathType Leaf)){
+            $statusLabel.Text='更新暂存结果无效';$statusLabel.ForeColor=[Drawing.Color]::FromArgb(184,70,45);Set-ControlsEnabled $true;return
+        }
+        $statusLabel.Text = '下载校验完成，正在退出并安装更新'
+        $statusLabel.ForeColor = [Drawing.Color]::FromArgb(0,115,90)
+        try {
+            Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"'+$workerPath+'"'),'-ManifestPath',('"'+$manifestPath+'"'),'-ParentProcessId',[string]$PID) -WindowStyle Hidden | Out-Null
+        } catch {
+            $statusLabel.Text='无法启动独立更新组件';$statusLabel.ForeColor=[Drawing.Color]::FromArgb(184,70,45);Set-ControlsEnabled $true;return
+        }
+        $form.Close()
+        return
+    } else {
+        $statusLabel.Text = '全部版本包已是最新版本'
+        $statusLabel.ForeColor = [Drawing.Color]::FromArgb(92,102,110)
+    }
+    Set-ControlsEnabled $true
+}
+
+function Show-PendingSkillUpdateResult {
+    $resultPath=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'puc-config\update-result.json'
+    if(-not(Test-Path -LiteralPath $resultPath -PathType Leaf)){return $false}
+    try {
+        $text=Get-Content -Raw -LiteralPath $resultPath
+        $record=$text|ConvertFrom-Json
+        $failed=[string]$record.status -eq 'update-failed'
+        Show-PucStandaloneResult -OperationLabel '更新版本包' -Environment '' -Stage '关闭后安装版本包' -Outputs @($text) -StartedAt ([datetime]::Now) -ViewState Finished -ExitCode $(if($failed){1}else{0})
+        $statusLabel.Text=$(if($failed){'版本包更新失败，已恢复旧版本'}else{'所有版本包更新完成'})
+        $statusLabel.ForeColor=$(if($failed){[Drawing.Color]::FromArgb(184,70,45)}else{[Drawing.Color]::FromArgb(0,115,90)})
+        $lastUpdateLabel.Text=Get-PucSkillUpdateDisplayText
+        return $true
+    } catch { return $false }
+    finally { Remove-Item -LiteralPath $resultPath -Force -ErrorAction SilentlyContinue }
+}
+
 $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 200
 $timer.Add_Tick({
     Update-EnvironmentVersionLookup
     Update-DispatcherLookup
+    if ($null -ne $script:SkillUpdateHandle) {
+        $script:SkillUpdateHandle.Process.Refresh()
+        if (-not $script:SkillUpdateHandle.Process.HasExited) { return }
+        Complete-SkillUpdate
+        return
+    }
     if($null -eq $script:ExecutionState -or $null -eq $script:ExecutionState.Handle){return}
     $process=$script:ExecutionState.Handle.Process;$process.Refresh();if(-not $process.HasExited){return}
     $result=Complete-HiddenProcess $script:ExecutionState.Handle
@@ -1513,6 +2059,13 @@ $timer.Add_Tick({
                 Start-Stage 'reset-live' @('Invoke-PucAccountPasswordReset.ps1','-Environment',$script:ExecutionState.Environment,'-Account',$script:ExecutionState.Data.Account,'-Live','-ConfirmLive','-ExpectedSnapshotHash',$hash);return
             }
             'batch-reset-preview' {
+                if([string]$json.status -eq 'no-match'){
+                    Set-PucPendingExecutionNodesSkipped $script:ExecutionState
+                    Finish-Execution 0
+                    $statusLabel.Text='查询结果为空'
+                    $statusLabel.ForeColor=[Drawing.Color]::FromArgb(92,102,110)
+                    return
+                }
                 $nextArguments=@('Invoke-PucAccountPasswordResetBatch.ps1','-Environment',$script:ExecutionState.Environment,'-Live','-ConfirmLive','-ManifestPath',$script:ExecutionState.Data.Manifest)
                 if($script:ExecutionState.Data.QueryMode){Request-PreviewConfirmation -Prompt '请查看完整账号列表，确认是否重置这些账号的密码。' -NextStage 'batch-reset-live' -Arguments $nextArguments -CancelText '用户已取消批量重置。';return}
                 Start-Stage 'batch-reset-live' $nextArguments;return
@@ -1531,6 +2084,7 @@ $timer.Add_Tick({
                 Start-Stage 'update-live' @('Invoke-PucAccountUpdate.ps1','-Environment',$script:ExecutionState.Environment,'-Account',$script:ExecutionState.Data.Account,'-ChangesPath',$script:ExecutionState.Data.FilePath,'-Live','-ConfirmLive','-ExpectedSnapshotHash',$hash);return
             }
             'personnel-preview' { Start-Stage 'personnel-live' (@($script:ExecutionState.Data.BaseArguments)+@('-Live','-ConfirmLive'));return }
+            'role-preview' { Start-Stage 'role-live' (@($script:ExecutionState.Data.BaseArguments)+@('-Live','-ConfirmLive'));return }
             'policy-preview' {
                 if($json.writeRequired -ne $true){Set-PucPendingExecutionNodesSkipped $script:ExecutionState;Finish-Execution 0;return}
                 Start-Stage 'policy-live' @('Invoke-PucFirstLoginPasswordCheck.ps1','-Environment',$script:ExecutionState.Environment,'-Action',$script:ExecutionState.Data.Action,'-Live','-ConfirmLive');return
@@ -1565,11 +2119,24 @@ $timer.Start()
 $operationBox.Add_SelectedIndexChanged({Rebuild-Inputs})
 $environmentBox.Add_SelectedIndexChanged({Update-EnvironmentAddress})
 $actionPanel.Add_SizeChanged({Update-ActionPanelLayout})
+function Sync-ContainerWidths {
+    $containerWidth = [Math]::Max(760,$form.ClientSize.Width)
+    $header.Width = $containerWidth
+    $accent.Width = $containerWidth
+    $selectionPanel.Width = $containerWidth
+    $inputPanel.Width = [Math]::Max(728,($containerWidth - 32))
+    $actionPanel.Width = $containerWidth
+    $resultLabel.Width = [Math]::Max(200,$containerWidth - 48)
+    $resultTabs.Width = [Math]::Max(200,$containerWidth - 48)
+}
+
 $form.Add_Resize({
+    Sync-ContainerWidths
     if ($resultFields.Columns.Count -ge 2) {
         $resultFields.Columns[1].Width = [Math]::Max(180,$resultFields.ClientSize.Width - $resultFields.Columns[0].Width - 8)
     }
 })
+Sync-ContainerWidths
 $addEnvironmentButton.Add_Click({
     $startedAt=[datetime]::Now
     $newEnvironment=Show-NewEnvironmentDialog
@@ -1600,6 +2167,38 @@ $reloadButton.Add_Click({
     try{Load-Environments;$statusLabel.Text='环境列表已刷新';$statusLabel.ForeColor=[Drawing.Color]::FromArgb(92,102,110)}
     catch{[Windows.Forms.MessageBox]::Show($form,$_.Exception.Message,'PUC Toolkit','OK','Error')|Out-Null}
 })
+$configPathButton.Add_Click({
+    $startedAt = [datetime]::Now
+    $dialog = New-Object Windows.Forms.FolderBrowserDialog
+    $dialog.Description = '选择配置存放位置，程序会在其中使用 agentSkillLocalConfig\puc-config 目录'
+    $dialog.ShowNewFolderButton = $true
+    try {
+        try { $currentRoot = Get-PucConfigRoot } catch { $currentRoot = Get-PucDefaultConfigRoot }
+        $currentStoragePath = Get-PucLauncherStorageSelectionPath $currentRoot
+        if (Test-Path -LiteralPath $currentStoragePath -PathType Container) { $dialog.SelectedPath = $currentStoragePath }
+        if ($dialog.ShowDialog($form) -ne [Windows.Forms.DialogResult]::OK) { return }
+        $previousRoot = try { Get-PucConfigRoot } catch { '' }
+        $pathChange = Set-PucLauncherConfigRoot -Path $dialog.SelectedPath -CurrentRoot $previousRoot
+        Load-Environments
+        $pathActionText = Get-PucLauncherConfigPathActionText ([string]$pathChange.Action)
+        $statusLabel.Text = "$pathActionText；最新路径：$($pathChange.ConfigRoot)"
+        $statusLabel.ForeColor = [Drawing.Color]::FromArgb(0,115,90)
+        $headerToolTip.SetToolTip($configPathButton,("当前配置路径：$($pathChange.ConfigRoot)"))
+        $pathResultJson = Get-PucLauncherConfigPathResultJson -Action ([string]$pathChange.Action) -ConfigRoot ([string]$pathChange.ConfigRoot)
+        Show-PucStandaloneResult -OperationLabel '设置配置路径' -Environment '' -Stage '更新配置路径' -Outputs @($pathResultJson) -StartedAt $startedAt -ViewState Finished -ExitCode 0
+        if ($pathChange.RestartRequired) {
+            $vbs = Join-Path $PSScriptRoot 'Start-PucConfigTool.vbs'
+            Start-Process -FilePath 'wscript.exe' -ArgumentList ('"' + $vbs + '"') -WindowStyle Hidden | Out-Null
+            $form.Close()
+            return
+        }
+    } catch {
+        $statusLabel.Text = '配置路径更新失败'
+        $statusLabel.ForeColor = [Drawing.Color]::FromArgb(184,70,45)
+        [Windows.Forms.MessageBox]::Show($form,$_.Exception.Message,'设置配置文件路径','OK','Error') | Out-Null
+    } finally { $dialog.Dispose() }
+})
+$updateButton.Add_Click({ Start-SkillUpdate })
 $clearButton.Add_Click({$script:LastUpgradePackagePath='';$uploadButton.Enabled=$false;Clear-PucResultView;$statusLabel.Text='就绪';$statusLabel.ForeColor=[Drawing.Color]::FromArgb(92,102,110)})
 $confirmButton.Add_Click({Confirm-PendingPreview})
 $cancelConfirmationButton.Add_Click({Cancel-PendingPreview})
@@ -1634,6 +2233,11 @@ $runButton.Add_Click({
 
 $form.Add_FormClosing({
     param($sender,$eventArgs)
+    if($null -ne $script:SkillUpdateHandle){
+        $eventArgs.Cancel=$true
+        [Windows.Forms.MessageBox]::Show($form,'Skill 更新仍在进行，请等待完成后再关闭。','PUC Toolkit','OK','Information')|Out-Null
+        return
+    }
     if($null -ne $script:ExecutionState){
         $eventArgs.Cancel=$true
         [Windows.Forms.MessageBox]::Show($form,'PUC 操作仍在运行，请等待完成后再关闭。','PUC Toolkit','OK','Information')|Out-Null
@@ -1642,6 +2246,66 @@ $form.Add_FormClosing({
 
 if ($UiSelfTest) {
     try {
+        $rootSelfTestDirectory = Join-Path ([IO.Path]::GetTempPath()) ('puc-launcher-root-self-test-' + [guid]::NewGuid().ToString('N'))
+        try {
+            $testSettingsPath = Join-Path $rootSelfTestDirectory 'local\setting.json'
+            $testDefaultRoot = Join-Path $rootSelfTestDirectory 'desktop\agentSkillLocalConfig\puc-config'
+            $initializedRoot = Initialize-PucLauncherConfigRoot -SettingsPath $testSettingsPath -DefaultRoot $testDefaultRoot
+            $savedSettings = Read-PucJson -Path $testSettingsPath -Default $null
+            if (-not $initializedRoot.Initialized -or -not (Test-Path -LiteralPath $testDefaultRoot -PathType Container) -or [string]$savedSettings.configRoot -ne [IO.Path]::GetFullPath($testDefaultRoot)) { throw 'GUI 默认配置路径自动初始化失败。' }
+            $testCustomRoot = Join-Path $rootSelfTestDirectory 'custom-config'
+            New-Item -ItemType Directory -Force -Path $testCustomRoot | Out-Null
+            Write-PucJson -Path $testSettingsPath -Value ([ordered]@{configRoot=$testCustomRoot})
+            $preservedRoot = Initialize-PucLauncherConfigRoot -SettingsPath $testSettingsPath -DefaultRoot $testDefaultRoot
+            if ($preservedRoot.Initialized -or $preservedRoot.ConfigRoot -ne [IO.Path]::GetFullPath($testCustomRoot)) { throw 'GUI 覆盖了有效的自定义配置路径。' }
+            $testTemplatePath = Join-Path $rootSelfTestDirectory 'config.template.json'
+            Write-PucJson -Path $testTemplatePath -Value ([ordered]@{version=1;environments=@()})
+            $sourceDocument = [ordered]@{version=1;environments=@([ordered]@{name='10.1.1.1';baseUrl='https://10.1.1.1:16890'})}
+            $migrationSourceParent = Join-Path $rootSelfTestDirectory 'old-storage\agentSkillLocalConfig'
+            $migrationSourceRoot = Join-Path $migrationSourceParent 'puc-config'
+            Write-PucJson -Path (Join-Path $migrationSourceRoot 'config.json') -Value $sourceDocument
+            Write-PucJson -Path (Join-Path $migrationSourceRoot 'runtime.json') -Value ([ordered]@{marker='runtime-preserved'})
+            Write-PucJson -Path (Join-Path $migrationSourceRoot 'reports\latest.json') -Value ([ordered]@{marker='report-preserved'})
+            Write-PucJson -Path $testSettingsPath -Value ([ordered]@{configRoot=$migrationSourceRoot})
+            $moveTargetStorage = Join-Path $rootSelfTestDirectory 'moved-config'
+            $moveTargetRoot = Join-Path $moveTargetStorage 'agentSkillLocalConfig\puc-config'
+            if ((Resolve-PucLauncherConfigRootFromSelection $moveTargetStorage) -ne $moveTargetRoot -or (Resolve-PucLauncherConfigRootFromSelection (Split-Path -Parent $moveTargetRoot)) -ne $moveTargetRoot -or (Resolve-PucLauncherConfigRootFromSelection $moveTargetRoot) -ne $moveTargetRoot) { throw 'GUI 配置存放位置未正确解析固定目录结构。' }
+            $moveResult = Set-PucLauncherConfigRoot -Path $moveTargetStorage -CurrentRoot $migrationSourceRoot -SettingsPath $testSettingsPath -TemplatePath $testTemplatePath
+            if ($moveResult.Action -ne 'moved' -or $moveResult.RestartRequired -or (Test-Path -LiteralPath $migrationSourceRoot) -or (Test-Path -LiteralPath $migrationSourceParent) -or -not (Test-Path -LiteralPath (Join-Path $moveTargetRoot 'config.json'))) { throw 'GUI 配置目录整体迁移失败。' }
+            $movedDocument = Read-PucJson -Path (Join-Path $moveTargetRoot 'config.json') -Default $null
+            $movedRuntime = Read-PucJson -Path (Join-Path $moveTargetRoot 'runtime.json') -Default $null
+            $movedReport = Read-PucJson -Path (Join-Path $moveTargetRoot 'reports\latest.json') -Default $null
+            $movedSettings = Read-PucJson -Path $testSettingsPath -Default $null
+            if (@($movedDocument.environments).Count -ne 1 -or [string]$movedDocument.environments[0].name -ne '10.1.1.1' -or [string]$movedRuntime.marker -ne 'runtime-preserved' -or [string]$movedReport.marker -ne 'report-preserved' -or [string]$movedSettings.configRoot -ne $moveTargetRoot) { throw '迁移后的 GUI 配置目录内容不完整。' }
+            $pathResultJson = Get-PucLauncherConfigPathResultJson -Action ([string]$moveResult.Action) -ConfigRoot ([string]$moveResult.ConfigRoot)
+            $pathResultModel = New-PucResultModel -Outputs @($pathResultJson) -OperationLabel '设置配置路径' -Stage '更新配置路径' -StartedAt ([datetime]::Now) -ViewState Finished -ExitCode 0
+            $pathResultFields = @{}; foreach ($field in @($pathResultModel.Fields)) { $pathResultFields[[string]$field.Name] = [string]$field.Value }
+            if ($pathResultModel.Heading -ne '执行成功 · 设置配置路径' -or $pathResultFields['message'] -ne '配置路径设置成功' -or $pathResultFields['operationResult'] -ne '配置目录及全部内容已迁移' -or $pathResultFields['configRoot'] -ne $moveTargetRoot) { throw 'GUI 执行摘要未展示配置路径设置结果和最新路径。' }
+            $emptySourceRoot = Join-Path $rootSelfTestDirectory 'empty-source'
+            $initializeTargetStorage = Join-Path $rootSelfTestDirectory 'initialized-config'
+            $initializeTargetRoot = Join-Path $initializeTargetStorage 'agentSkillLocalConfig\puc-config'
+            $initializeResult = Set-PucLauncherConfigRoot -Path $initializeTargetStorage -CurrentRoot $emptySourceRoot -SettingsPath $testSettingsPath -TemplatePath $testTemplatePath
+            $initializedDocument = Read-PucJson -Path (Join-Path $initializeTargetRoot 'config.json') -Default $null
+            if ($initializeResult.Action -ne 'initialized' -or $initializeResult.RestartRequired -or [int]$initializedDocument.version -ne 1 -or @($initializedDocument.environments).Count -ne 0) { throw 'GUI 新路径配置文件初始化失败。' }
+        } finally {
+            if (Test-Path -LiteralPath $rootSelfTestDirectory) { Remove-Item -LiteralPath $rootSelfTestDirectory -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+        if ($updateButton.Parent -ne $header -or $updateButton.Text -ne [string][char]0xE896 -or $updateButton.AccessibleName -ne '更新版本包' -or -not $updateButton.Enabled -or $updateButton.FlatAppearance.BorderSize -ne 0 -or $updateButton.ForeColor -ne [Drawing.Color]::FromArgb(0,105,99) -or $updateButton.FlatAppearance.MouseOverBackColor -ne [Drawing.Color]::FromArgb(240,250,249) -or $updateButton.FlatAppearance.MouseDownBackColor -ne [Drawing.Color]::FromArgb(214,234,232) -or $updateButton.Bounds.IntersectsWith($lastUpdateLabel.Bounds)) { throw '顶部版本更新图标渲染不正确。' }
+        if ($lastUpdateLabel.Parent -ne $header -or $lastUpdateLabel.Text -notmatch '^上次更新：(暂无记录|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$') { throw '上次更新时间渲染不正确。' }
+        if ($addEnvironmentButton.BackColor -ne [Drawing.Color]::White -or $addEnvironmentButton.ForeColor -ne [Drawing.Color]::FromArgb(29,78,216) -or $addEnvironmentButton.FlatAppearance.BorderColor -ne [Drawing.Color]::FromArgb(147,197,253)) { throw '新增环境按钮配色不正确。' }
+        if ($configPathButton.Parent -ne $selectionPanel -or $configPathButton.Text -ne '设置配置路径' -or $configPathButton.AccessibleName -ne '设置配置文件路径' -or $configPathButton.BackColor -ne [Drawing.Color]::White -or $configPathButton.ForeColor -ne [Drawing.Color]::FromArgb(194,95,20) -or $configPathButton.FlatAppearance.BorderColor -ne [Drawing.Color]::FromArgb(229,161,93)) { throw '配置路径按钮渲染不正确。' }
+        if ($reloadButton.BackColor -ne [Drawing.Color]::White -or $reloadButton.ForeColor -ne [Drawing.Color]::FromArgb(0,105,99) -or $reloadButton.FlatAppearance.BorderColor -ne [Drawing.Color]::FromArgb(134,203,196)) { throw '刷新按钮配色不正确。' }
+        foreach ($toolbarButton in @($configPathButton,$addEnvironmentButton,$reloadButton)) {
+            if ($toolbarButton.FlatStyle -ne [Windows.Forms.FlatStyle]::Flat -or $toolbarButton.FlatAppearance.BorderSize -ne 1 -or $toolbarButton.Height -ne $reloadButton.Height -or $toolbarButton.Font.Name -ne $reloadButton.Font.Name -or $toolbarButton.Font.Size -ne $reloadButton.Font.Size -or $toolbarButton.Font.Style -ne $reloadButton.Font.Style) { throw '环境工具栏按钮风格不一致。' }
+        }
+        foreach ($leftControl in @($operationBox,$configPathButton,$addEnvironmentButton)) {
+            $rightControl = if ($leftControl -eq $operationBox) {$configPathButton} elseif ($leftControl -eq $configPathButton) {$addEnvironmentButton} else {$reloadButton}
+            if ($leftControl.Bounds.IntersectsWith($rightControl.Bounds)) { throw '环境操作行控件发生重叠。' }
+        }
+        foreach ($operation in $script:Operations) {
+            $requiredWidth = [Windows.Forms.TextRenderer]::MeasureText([string]$operation.Label,$operationBox.Font).Width + 28
+            if ($requiredWidth -gt $operationBox.ClientSize.Width) { throw "操作名称显示宽度不足：$([string]$operation.Label)" }
+        }
         if ($uploadButton.Enabled -or $script:UploadButtonRequestedVisible) { throw '非 Android 升级包操作不得显示或启用上传按钮。' }
         $operationBox.SelectedItem = @($script:Operations | Where-Object Key -eq 'android-upgrade')[0]
         Rebuild-Inputs
@@ -1650,12 +2314,44 @@ if ($UiSelfTest) {
         $operationBox.SelectedItem = @($script:Operations | Where-Object Key -eq 'reset-query')[0]
         Rebuild-Inputs
         if ($script:UploadButtonRequestedVisible) { throw '切换到非 Android 升级包操作后上传按钮仍然可见。' }
+        $operationBox.SelectedItem = @($script:Operations | Where-Object Key -eq 'create')[0]
+        Rebuild-Inputs
+        if (-not [string]::IsNullOrEmpty([string]$script:FieldControls['prefix'].Input.Text)) { throw '新增调度账号 GUI 不得预填账号前缀。' }
+        if ([int]$script:FieldControls['count'].Input.Value -ne 1) { throw '新增调度账号 GUI 创建数量必须默认为 1。' }
+        if (-not [bool]$inputPanelDoubleBufferedProperty.GetValue($inputPanel,$null)) { throw '操作参数面板未启用双缓冲重绘。' }
+        $prefixInput = $script:FieldControls['prefix'].Input
+        $countInput = $script:FieldControls['count'].Input
+        $initialFieldWidth = $prefixInput.Width
+        if ($prefixInput.Left -ne 24 -or $countInput.Left - $prefixInput.Right -ne 16 -or $prefixInput.Width -ne $countInput.Width -or $countInput.Right -ne ($inputPanel.ClientSize.Width - 24)) { throw '操作参数两列未与容器等宽对齐。' }
+        $originalClientSize = $form.ClientSize
+        $initialResizeInvalidationCount = $script:InputPanelResizeInvalidationCount
+        $form.ClientSize = New-Object Drawing.Size(($originalClientSize.Width + 240),$originalClientSize.Height)
+        Sync-ContainerWidths
+        Update-PucInputFieldLayout
+        if ($prefixInput.Width -le $initialFieldWidth -or $countInput.Right -ne ($inputPanel.ClientSize.Width - 24) -or $countInput.Left - $prefixInput.Right -ne 16) { throw '窗口缩放后操作参数两列未随容器伸缩。' }
+        if ($script:InputPanelResizeInvalidationCount -le $initialResizeInvalidationCount) { throw '窗口缩放时操作参数面板未执行全区域失效重绘。' }
+        $form.ClientSize = $originalClientSize
+        Sync-ContainerWidths
+        Update-PucInputFieldLayout
         $operationBox.SelectedItem = @($script:Operations | Where-Object Key -eq 'personnel-exact')[0]
         Rebuild-Inputs
         $typeControl = $script:FieldControls['numberType'].Input
         $dispatcherControl = $script:FieldControls['dispatcherAccount'].Input
+        $dispatcherStatus = $script:FieldControls['dispatcherAccount'].SearchStatus
         if ($typeControl.Items.Count -ne 3 -or (@($typeControl.Items | ForEach-Object Label) -join ',') -ne '人员,车,应急车') { throw '人员类型下拉选项渲染不正确。' }
         if ($dispatcherControl.DropDownStyle -ne [Windows.Forms.ComboBoxStyle]::DropDown -or $dispatcherControl.DisplayMember -ne 'Label' -or $dispatcherControl.ValueMember -ne 'Value') { throw '调度账号搜索单选下拉渲染不正确。' }
+        if ($dispatcherStatus -isnot [Windows.Forms.Label] -or $dispatcherControl.Tag -ne $dispatcherStatus) { throw '调度账号搜索状态标签未正确绑定。' }
+        if ($script:FieldControls['dispatcherAccount'].Label.Bounds.IntersectsWith($dispatcherStatus.Bounds)) { throw '调度账号搜索状态与字段标题发生重叠。' }
+        Set-PucDispatcherSearchStatus -Control $dispatcherControl -State Loading
+        if ($dispatcherStatus.Text -ne '查询中...' -or $dispatcherStatus.ForeColor.B -le $dispatcherStatus.ForeColor.R) { throw '调度账号查询中状态显示不正确。' }
+        Set-PucDispatcherSearchStatus -Control $dispatcherControl -State Found -Count 2
+        if ($dispatcherStatus.Text -ne '找到 2 个账号') { throw '调度账号查询成功状态显示不正确。' }
+        Set-PucDispatcherSearchStatus -Control $dispatcherControl -State Empty
+        if ($dispatcherStatus.Text -ne '未找到匹配账号') { throw '调度账号查询空结果状态显示不正确。' }
+        Set-PucDispatcherSearchStatus -Control $dispatcherControl -State Failed
+        if ($dispatcherStatus.Text -ne '查询失败' -or $dispatcherStatus.ForeColor.R -le $dispatcherStatus.ForeColor.G) { throw '调度账号查询失败状态显示不正确。' }
+        Set-PucDispatcherSearchStatus -Control $dispatcherControl -State Selected
+        if ($dispatcherStatus.Text -ne '已选择' -or $dispatcherStatus.ForeColor.G -le $dispatcherStatus.ForeColor.R) { throw '调度账号已选择状态显示不正确。' }
         $script:DispatcherLookup = $null
         $dispatcherControl.Text = 'mhw'
         $onTextUpdate = [Windows.Forms.ComboBox].GetMethod('OnTextUpdate',[Reflection.BindingFlags]'Instance,NonPublic')
@@ -1721,12 +2417,17 @@ if ($UiSelfTest) {
         if ($resultTabs.TabPages.Count -ne 3) { throw '结果标签页数量不正确。' }
         if ($versionLabel.Parent -ne $selectionPanel -or $versionLabel.Text -notmatch '^版本：') { throw '环境版本显示控件不正确。' }
         if ($versionCompatibilityWarningLabel.Parent -ne $selectionPanel -or $versionCompatibilityWarningLabel.Text -ne '不同版本号上表现可能存在差异' -or $versionCompatibilityWarningLabel.ForeColor.R -lt 150) { throw '版本兼容性提示控件不正确。' }
+        if ($addressLabel.Bounds.IntersectsWith($versionLabel.Bounds) -or $versionLabel.Left -ne $environmentBox.Left -or $versionLabel.Top -le $addressLabel.Top -or $versionCompatibilityWarningLabel.Anchor -ne 'Top,Left' -or $versionCompatibilityWarningLabel.TextAlign -ne [Drawing.ContentAlignment]::TopLeft) { throw '版本信息行未显示在环境栏下方左侧。' }
         if ($versionLabel.Bounds.IntersectsWith($versionCompatibilityWarningLabel.Bounds)) { throw '版本号与兼容性提示发生重叠。' }
         if ([Windows.Forms.TextRenderer]::MeasureText($versionCompatibilityWarningLabel.Text,$versionCompatibilityWarningLabel.Font).Width -gt $versionCompatibilityWarningLabel.ClientSize.Width) { throw '版本兼容性提示文本显示不完整。' }
+        if ($selectionPanel.Bottom -ne $inputPanel.Top) { throw '环境信息区与操作参数区布局不连续。' }
         if ($summaryTab.Text -ne '执行摘要' -or $resultTab.Text -ne '执行结果' -or $detailsTab.Text -ne '详细输出') { throw '结果标签页中文标题不正确。' }
         if ($resultGrid.Parent -ne $resultTab -or $resultLayout.RowCount -ne 2) { throw '摘要和结果未使用独立标签页布局。' }
         if ($resultFields.Items.Count -lt 3) { throw '结果摘要字段未渲染。' }
         if ($resultGrid.Rows.Count -ne 2) { throw '批量结果表格未渲染完整。' }
+        if ($resultGrid.SelectionMode -ne [Windows.Forms.DataGridViewSelectionMode]::CellSelect -or -not $resultGrid.MultiSelect) { throw '执行结果表格未启用单元格多选。' }
+        if ($resultGrid.ClipboardCopyMode -ne [Windows.Forms.DataGridViewClipboardCopyMode]::EnableWithoutHeaderText) { throw '执行结果表格未启用剪贴板复制。' }
+        if ($resultGrid.ContextMenuStrip -ne $resultGridMenu -or $resultGridMenu.Items.Count -ne 2) { throw '执行结果表格复制菜单不完整。' }
         if ($resultGrid.Columns.Contains('group')) { throw '单一来源批量结果不应显示冗余分类列。' }
         if (-not $resultGrid.Columns.Contains('account') -or $resultGrid.Columns['account'].MinimumWidth -lt 140) { throw '账号列宽度不足。' }
         foreach ($compactName in @('stage1Result','stage2Result','writesUsed')) {
@@ -1735,20 +2436,46 @@ if ($UiSelfTest) {
         if ($resultGrid.Columns['stage1Result'].HeaderText -ne '阶段 1 结果' -or $resultGrid.Columns['writesUsed'].HeaderText -ne '写入次数') { throw '结果列中文标题不正确。' }
         if ($detailsBox.Text -match 'UI-SECRET') { throw '详细输出包含未脱敏字段。' }
         if ($resultTabs.Height -lt 300 -or $resultLayout.RowStyles[1].SizeType -ne [Windows.Forms.SizeType]::Percent) { throw '执行摘要区域未使用完整可用高度。' }
-        [pscustomobject]@{status='ui-self-test-passed';tabs=$resultTabs.TabPages.Count;summaryFields=$resultFields.Items.Count;detailRows=$resultGrid.Rows.Count;resultHeight=$resultTabs.Height;environmentVersionControl='passed';versionCompatibilityWarning='passed';summaryFullHeight='passed';latestStageRows='passed';compactNumericColumns='passed';accountColumnWidth='passed';inlineConfirmation='passed';uploadVisibility='passed';actionBarLayout='passed';personnelTypeDropdown='passed';dispatcherSearchDropdown='passed';dispatcherSearchEvent='passed';updateAccountSearchDropdown='passed';updateAccountSearchSelection='passed';resetAccountSearchDropdown='passed';resetAccountSearchSelection='passed';executionNodeColors='passed';redundantGroupColumn='hidden'} | ConvertTo-Json -Compress
+        if ($resultTabs.Left -ne 24 -or $resultTabs.Right -ne ($form.ClientSize.Width - 24)) { throw '运行信息区域未与容器宽度保持一致。' }
+        if ($null -eq $form.Icon -or -not $form.ShowIcon -or -not (Test-Path -LiteralPath $launcherIconPath -PathType Leaf)) { throw '主窗口未加载桌面快捷方式使用的 PUC Toolkit 图标。' }
+        if ([PucTaskbarIdentity]::GetProcessIdentity() -ne $script:PucAppUserModelId -or [PucTaskbarIdentity]::GetWindowProperty($form.Handle,5) -ne $script:PucAppUserModelId -or [PucTaskbarIdentity]::GetWindowProperty($form.Handle,3) -ne $taskbarIconResource) { throw '任务栏未绑定 PUC Toolkit 的独立应用标识和图标资源。' }
+        [pscustomobject]@{status='ui-self-test-passed';tabs=$resultTabs.TabPages.Count;summaryFields=$resultFields.Items.Count;detailRows=$resultGrid.Rows.Count;resultHeight=$resultTabs.Height;environmentVersionControl='passed';versionCompatibilityWarning='passed';summaryFullHeight='passed';resultContainerWidth='passed';windowIcon='passed';taskbarIdentity='passed';inputPanelRedraw='passed';responsiveInputColumns='passed';latestStageRows='passed';compactNumericColumns='passed';accountColumnWidth='passed';inlineConfirmation='passed';uploadVisibility='passed';actionBarLayout='passed';createPrefixDefault='empty';createCountDefault=1;personnelTypeDropdown='passed';dispatcherSearchDropdown='passed';dispatcherSearchEvent='passed';dispatcherSearchStatus='passed';updateAccountSearchDropdown='passed';updateAccountSearchSelection='passed';resetAccountSearchDropdown='passed';resetAccountSearchSelection='passed';executionNodeColors='passed';redundantGroupColumn='hidden'} | ConvertTo-Json -Compress
     } finally {
         $timer.Stop();$timer.Dispose();$form.Dispose()
+        if ($null -ne $launcherIcon) { $launcherIcon.Dispose() }
     }
     return
 }
 
 try{
-    Load-Environments
+    $startupError = ''
+    $rootInitialization = $null
+    try {
+        $rootInitialization = Initialize-PucLauncherConfigRoot
+        Load-Environments
+        $headerToolTip.SetToolTip($configPathButton,("当前配置路径：$($rootInitialization.ConfigRoot)"))
+    } catch {
+        $startupError = $_.Exception.Message
+        $environmentBox.Items.Clear()
+        $environmentBox.SelectedIndex = -1
+        Update-EnvironmentAddress
+    }
     Rebuild-Inputs
     Clear-PucResultView
+    if (-not [string]::IsNullOrWhiteSpace($startupError)) {
+        Show-PucStandaloneResult -OperationLabel '加载配置' -Environment '' -Stage '初始化配置路径' -Outputs @($startupError) -StartedAt ([datetime]::Now) -ViewState Finished -ExitCode 1
+        $statusLabel.Text = '配置加载失败，请重新设置配置路径'
+        $statusLabel.ForeColor = [Drawing.Color]::FromArgb(184,70,45)
+    } elseif (Show-PendingSkillUpdateResult) {
+        # The one-time update result already populated the status and summary.
+    } elseif ($null -ne $rootInitialization -and $rootInitialization.Initialized) {
+        $statusLabel.Text = '已自动初始化默认配置路径'
+        $statusLabel.ForeColor = [Drawing.Color]::FromArgb(0,115,90)
+    }
     [void]$form.ShowDialog()
 }catch{
     [Windows.Forms.MessageBox]::Show($_.Exception.Message,'PUC Toolkit','OK','Error')|Out-Null
 }finally{
     $timer.Stop();$timer.Dispose();$form.Dispose()
+    if ($null -ne $launcherIcon) { $launcherIcon.Dispose() }
 }

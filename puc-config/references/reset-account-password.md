@@ -9,6 +9,7 @@ In the graphical launcher's single-account form, resolve the dispatcher through 
 Match the PUC frontend reset-password behavior:
 
 1. Query `account_list_request` and require exactly one case-insensitive exact `dispatcher_account` match. Match the verified frontend request shape: send `user_id`, `realm`, paging, `querykey`, `lock_query`, and `filter`, but do not add `puc_id`; on some PUC versions, adding `puc_id` changes the account scope and can return an empty list even when the token-authorized account query has matches.
+   Treat a null `account_list` as empty and ignore null or malformed list entries that do not contain a dispatcher account; never fail by dereferencing an absent response row.
 2. Start the `update_account` payload from that fresh complete account record so all returned account parameters remain unchanged.
 3. Set `cmd_name` to `update_account`.
 4. Build one payload from the fresh record, preserve all other fields, set `is_change_pwd` to `1`, and normalize `imei_list` exactly as the frontend does because the API requires an array.
@@ -55,6 +56,8 @@ After a successful single reset, query the login policy and report whether "disp
 A batch reset is a set of independent per-account workflows:
 
 - Discover every matching account across all account-list pages and preview every target before authorization.
+- For query-based discovery, send `is_fuzzy_qry: 1` and `online_query: 0` so account prefixes and substrings use the same server-side fuzzy semantics as the launcher search. Continue omitting `puc_id` to preserve the verified password-reset account scope across PUC versions.
+- When a successful query returns no matching accounts, emit a successful structured `no-match` result with account count `0` and the Chinese message `未查询到匹配的调度账号，请调整查询关键字后重试。`. In the launcher, mark the preview node completed, mark the reset node skipped, show `查询结果为空`, and do not request confirmation or start live mode.
 - Show the complete target list and snapshot hash for each account. For `-Query`, require one explicit confirmation covering only that displayed batch because the query discovers accounts the user did not enumerate. For `-AccountsPath`, treat the user's explicit enumeration of the exact environment and account set as confirmation and do not ask again after preview.
 - After authorization, launch every account workflow concurrently. Do not make one account wait for another account to finish.
 - Within each account workflow, preserve the strict order: timestamp-password update first, then the `newAccountPassword` update only after that account's first call returns `result == 0`.

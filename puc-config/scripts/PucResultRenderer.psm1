@@ -88,18 +88,18 @@ function Get-PucResultLabel([string]$Name) {
         bytes='文件大小'; changedFields='变更字段'; changes='变更'; code='编码'; command='命令'
         configBytes='配置大小'; configFilePath='配置文件'; configSha256='配置 SHA-256'; dispatchNumber='调度号码'; dispatcherAccount='调度账号'
         count='数量'; currentEnabled='当前启用'; currentFlag='当前值'; currentLicenseType='当前 License 类型'
-        currentValue='当前值'; desiredFlag='目标值'; desiredValue='目标值'; environment='环境'; error='错误'
+        currentValue='当前值'; desiredFlag='目标值'; desiredValue='目标值'; environment='环境'; error='错误'; configRoot='最新路径'
         failed='失败数'; failedAccount='失败账号'; filePath='文件路径'; group='分类'; incomingLicenseType='待导入 License 类型'
         idNumber='证件号码'; importedLicenseType='已导入 License 类型'; itemCount='项目数'; licenseBytes='License 大小'
         licenseFilePath='License 文件'; licenseSha256='License SHA-256'; manifestPath='执行清单'
         mobile='手机号码'; name='名称'; nodeCount='节点数'; officerId='警员编号'; percentage='进度'; previousLicenseType='原 License 类型'
-        previewHash='预览哈希'; query='查询条件'; reason='说明'; replacement='已替换'
+        message='提示'; operationResult='操作结果'; previewHash='预览哈希'; query='查询条件'; reason='说明'; replacement='已替换'
         replacementRequired='需要替换'; result='结果码'; results='结果'; sha256='SHA-256'
         role='角色'; roleGuid='角色 GUID'; roleSelection='角色选择'; sequence='序号'; snapshotHash='快照哈希'; stage1Result='阶段 1 结果'; stage2Result='阶段 2 结果'; status='状态'
         succeeded='成功数'; target='目标'; targetSource='目标来源'; taskId='任务 ID'; updateCount='待更新'
         value='值'; verified='已验证'; writeRequired='需要写入'; writesUsed='写入次数'; plannedWrites='计划写入'
         finalPasswordStatus='最终密码'; oldValue='原值'; newValue='新值'; field='字段'; ok='成功'
-        finalPath='升级包路径'; finalName='升级包文件名'; packageName='应用包名'; versionName='版本名称'; versionCode='版本号'
+        finalPath='升级包路径'; finalName='升级包文件名'; package='版本包'; packageName='应用包名'; packageCount='版本包数量'; packageNames='版本包'; updatedCount='更新数量'; installedCount='新增安装数量'; versionName='版本名称'; versionCode='版本号'
         apkMd5='APK MD5'; apkSize='APK 大小'; upgradeZipMd5='upgrade.zip MD5'; outputSize='升级包大小'; outputDirectory='输出目录'; description='升级说明'; force='强制升级'
     }
     if ($labels.ContainsKey($Name)) { return $labels[$Name] }
@@ -111,9 +111,9 @@ function Get-PucStatusText([string]$Value) {
         'already-complete'='无需修改'; 'completed'='已完成'; 'configured'='配置完成'; 'created'='已创建'
         'current'='当前状态'; 'exported'='已导出'; 'failed'='失败'; 'imported'='已导入'; 'partial-failure'='部分失败'
         'planned'='已检查'; 'planned-offline'='本地检查完成'; 'previewed'='预检完成'; 'ready'='待执行'
-        'skipped'='已跳过'; 'unchanged'='无需变更'; 'updated'='已更新'; 'no-change'='无需变更'
+        'skipped'='已跳过'; 'unchanged'='无需变更'; 'updated'='已更新'; 'installed'='已安装'; 'no-change'='无需变更'; 'no-match'='查询结果为空'
         'password-reset'='密码已重置'; 'preview-failed'='预检失败'; 'conflict-skipped'='冲突已跳过'
-        'build-complete'='已制作完成'
+        'build-complete'='已制作完成'; 'latest'='已是最新版本'; 'staged'='已下载待安装'; 'update-failed'='更新失败'
         'true'='是'; 'false'='否'
     }
     if ($statuses.ContainsKey($Value)) { return $statuses[$Value] }
@@ -214,6 +214,8 @@ function New-PucResultModel {
     elseif ($ViewState -eq 'Confirmation') { $kind='Warning';$statusText='等待确认' }
     elseif ($ViewState -eq 'Finished') {
         if ($combinedText -match '(?i)(用户已取消|cancelled|canceled)') { $kind='Neutral';$statusText='已取消' }
+        elseif ($latestStatus -eq 'no-match') { $kind='Neutral';$statusText='查询结果为空' }
+        elseif ($latestStatus -eq 'latest' -and $ExitCode -eq 0) { $kind='Success';$statusText='已是最新版本' }
         elseif ($combinedText -match '(?i)(uncertain|不确定|may require manual reconciliation|No retry was attempted)' -and $ExitCode -ne 0) { $kind='Warning';$statusText='结果不确定' }
         elseif ($latestStatus -match 'partial-failure' -or ($ExitCode -ne 0 -and $combinedText -match '(?i)(after the configuration file was saved|部分成功|已成功)')) { $kind='Warning';$statusText='部分成功' }
         elseif ($ExitCode -eq 0) { $kind='Success';$statusText='执行成功' }
@@ -246,9 +248,12 @@ function New-PucResultModel {
     } elseif (-not [string]::IsNullOrWhiteSpace($Stage)) {
         $fields.Add([pscustomobject]@{Name='stage';Label='执行阶段';Value=$Stage})
     }
+    if ($latestStatus -eq 'latest' -and $ExitCode -eq 0) {
+        Add-PucResultField $fields $seen 'message' '仓库下全部版本包已是最新版本，无需更新。'
+    }
 
     $displayFields = @(
-        'account','query','targetSource','accountCount','count','itemCount','nodeCount','updateCount','alreadyComplete',
+        'account','query','message','operationResult','configRoot','targetSource','accountCount','count','itemCount','nodeCount','updateCount','packageCount','packageNames','updatedCount','installedCount','alreadyComplete',
         'succeeded','failed','failedAccount','currentEnabled','currentFlag','currentValue','desiredFlag','desiredValue',
         'writeRequired','verified','taskId','percentage','filePath','bytes','sha256','configFilePath','configBytes',
         'configSha256','licenseFilePath','licenseBytes','licenseSha256','manifestPath','replacementRequired',

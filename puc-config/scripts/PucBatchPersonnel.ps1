@@ -20,18 +20,30 @@ if ([int]$config.numberType -notin @(102,103,104)) { throw 'numberType must be 1
 if ([string]::IsNullOrWhiteSpace([string]$config.exactAlias) -and [string]::IsNullOrWhiteSpace([string]$config.aliasPrefix)) { throw 'Provide exactAlias or aliasPrefix.' }
 if (-not [string]::IsNullOrWhiteSpace([string]$config.exactAlias) -and [int]$config.count -ne 1) { throw 'exactAlias supports exactly one personnel record.' }
 
-function New-PersonValues([int]$sequence) {
-    if (-not [string]::IsNullOrWhiteSpace([string]$config.exactAlias)) {
-        return [pscustomobject]@{ sequence=$sequence; alias=[string]$config.exactAlias; officerId=''; idNumber=''; mobile='' }
+$script:lastPersonnelTimestamp = 0L
+function New-PersonTimestamp {
+    $timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    if ([Math]::Floor($timestamp / 100) -le [Math]::Floor($script:lastPersonnelTimestamp / 100)) {
+        $timestamp = ([long][Math]::Floor($script:lastPersonnelTimestamp / 100) + 1L) * 100L
     }
-    $ip = ([int]$config.ipSuffix).ToString('000')
-    $suffix = $sequence.ToString('000')
+    $script:lastPersonnelTimestamp = $timestamp
+    return $timestamp.ToString([Globalization.CultureInfo]::InvariantCulture)
+}
+
+function New-PersonValues([int]$sequence) {
+    $timestamp = New-PersonTimestamp
+    $alias = [string]$config.exactAlias
+    if ([string]::IsNullOrWhiteSpace($alias)) {
+        $ip = ([int]$config.ipSuffix).ToString('000')
+        $suffix = $sequence.ToString('000')
+        $alias = "$($config.aliasPrefix)$ip$suffix"
+    }
     [pscustomobject]@{
         sequence = $sequence
-        alias = "$($config.aliasPrefix)$ip$suffix"
-        officerId = "$ip$($sequence.ToString('00000'))"
-        idNumber = "9$ip$($sequence.ToString('0000'))"
-        mobile = "139$ip$($sequence.ToString('00000'))"
+        alias = $alias
+        officerId = $timestamp.Substring($timestamp.Length - 8)
+        idNumber = $timestamp
+        mobile = $timestamp.Substring(0, 11)
     }
 }
 

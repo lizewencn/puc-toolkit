@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Environment,
     [string]$Query,
@@ -25,6 +25,7 @@ $root = Get-PucConfigRoot $ConfigRoot
 $singleResetScript = Join-Path $PSScriptRoot 'Invoke-PucAccountPasswordReset.ps1'
 
 function Get-PropertyValue($Object, [string]$Name, $Default = $null) {
+    if ($null -eq $Object) { return $Default }
     $property = @($Object.PSObject.Properties.Match($Name)) | Select-Object -First 1
     if ($null -eq $property) { return $Default }
     return $property.Value
@@ -114,7 +115,8 @@ function Get-MatchingAccounts([string]$AccountQuery) {
         while ($true) {
             $body = [ordered]@{
                 cmd_name='account_list_request'; user_id=[string]$environmentConfig.adminAccount; realm=[string]$environmentConfig.realm
-                page_sizes=30; page_index=$pageIndex; querykey=$AccountQuery; lock_query=0; filter=[ordered]@{by_role='';by_state=0}
+                page_sizes=30; page_index=$pageIndex; querykey=$AccountQuery; lock_query=0; online_query=0; is_fuzzy_qry=1
+                filter=[ordered]@{by_role='';by_state=0}
             }
             $response = Invoke-PucJsonRequest -Uri ([uri]($baseUri.AbsoluteUri.TrimEnd('/') + '/confs')) -Body $body -Headers @{token=[string]$environmentConfig.token} -AllowInsecureTls ([bool]$environmentConfig.allowInsecureTls) -TimeoutSec 60 -Depth 60
             if ($null -eq $response) { throw "Account discovery failed on page $pageIndex with an empty response. No retry was attempted." }
@@ -123,6 +125,7 @@ function Get-MatchingAccounts([string]$AccountQuery) {
             }
             foreach ($row in @((Get-PropertyValue $response 'account_list' @()))) {
                 $account = [string](Get-PropertyValue $row 'dispatcher_account' '')
+                if ([string]::IsNullOrWhiteSpace($account)) { continue }
                 if ($account.IndexOf($AccountQuery,[StringComparison]::OrdinalIgnoreCase) -ge 0) { $accounts.Add($account) }
             }
             $pageCount = 0
@@ -154,7 +157,14 @@ if ($PlanOnly) {
 
 if ($DryRun) {
     $accounts = @(if ($AccountsPath) { Get-ExactRequestedAccounts $AccountsPath } else { Get-MatchingAccounts $Query })
-    if ($accounts.Count -eq 0) { throw "No dispatcher accounts matched the selected target source." }
+    if ($accounts.Count -eq 0) {
+        [pscustomobject]@{
+            status='no-match'; action='BatchResetAccountPassword'; environment=$Environment
+            targetSource=$(if($AccountsPath){'accounts-file'}else{'query'}); query=$Query; accountCount=0; accounts=@()
+            message='未查询到匹配的调度账号，请调整查询关键字后重试。'; writesUsed=0
+        } | ConvertTo-Json -Depth 6 -Compress
+        return
+    }
     $preview = @(Start-ResetChildren -Entries @($accounts | ForEach-Object { [pscustomobject]@{account=$_} }) -Mode DryRun)
     $failed = @($preview | Where-Object { -not $_.ok })
     if ($failed.Count -gt 0) {

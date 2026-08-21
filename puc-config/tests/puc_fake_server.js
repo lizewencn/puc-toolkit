@@ -90,7 +90,12 @@ const server = http.createServer((request, response) => {
     if (body.cmd_name === 'short_organization_list_request') return send(response, { result: 0, organization_info_list: [{ org_identifier: '00', org_alias: 'Dispatch', parent_org_identifier: '' }] });
     if (body.cmd_name === 'personnel_organization_list_req') return send(response, { result: 0, organization_info_list: [{ custom_org_id: '00', custom_org_alias: 'Dispatch', parent_custom_org_id: '' }] });
     if (body.cmd_name === 'account_list_request') {
-      accountQueries.push({ querykey: body.querykey, is_fuzzy_qry: body.is_fuzzy_qry });
+      accountQueries.push({
+        querykey: body.querykey,
+        is_fuzzy_qry: body.is_fuzzy_qry,
+        online_query: body.online_query,
+        hasPucId: Object.prototype.hasOwnProperty.call(body, 'puc_id'),
+      });
       const query = String(body.querykey || '').toLowerCase();
       const list = [...accounts.values()].filter((item) => item.dispatcher_account.toLowerCase().includes(query));
       return send(response, { result: 0, account_list: list, page_count: 1 });
@@ -100,7 +105,13 @@ const server = http.createServer((request, response) => {
       return send(response, { result: 0, police_info_list: [], page_count: 1 });
     }
     if (body.cmd_name === 'conf_add_personnel_info_req') {
-      personnelRequests.push({ command: body.cmd_name, number_type: body.personnel_info?.number_type });
+      personnelRequests.push({
+        command: body.cmd_name,
+        number_type: body.personnel_info?.number_type,
+        officer_id: body.personnel_info?.officer_id,
+        id_number: body.personnel_info?.id_number,
+        mobile: body.personnel_info?.mobile,
+      });
       return send(response, { result: 0, msg: 'ok' });
     }
     if (body.cmd_name === 'update_account') {

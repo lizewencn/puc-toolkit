@@ -25,5 +25,6 @@ This file applies to the entire repository.
 
 - Use standard Git workflows and follow Conventional Commits for commit messages.
 - Write all commit messages in English.
+- Do not use or populate commit messages from any local Git commit template; write commit messages directly according to the standard Conventional Commits format.
 - When synchronizing code causes conflicts between feature changes, understand both sides and preserve the functionality of each side whenever possible; verify the merged behavior after resolving the conflict.
 - Never force-push. The use of `git push --force`, `git push -f`, `git push --force-with-lease`, or any equivalent force-push operation is prohibited.

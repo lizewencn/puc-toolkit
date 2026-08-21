@@ -156,8 +156,9 @@ class AppPucBridge:
         if isinstance(options.get("reconnect_delays"), list):
             options["reconnect_delays"] = tuple(float(item) for item in options["reconnect_delays"])
         config = LoginConfig(**options)
-        self.client.start(config, self._on_login_event)
-        self._write({"type": "response", "command": "login", "ok": True, "data": {"state": "starting"}})
+        generation = command.get("generation")
+        self.client.start(config, lambda event, value=generation: self._on_login_event(event, value))
+        self._write({"type": "response", "command": "login", "generation": generation, "ok": True, "data": {"state": "starting"}})
 
     def _stop(self) -> None:
         self.client.stop()
@@ -212,8 +213,8 @@ class AppPucBridge:
         except Exception as exc:
             self._events.put({"kind": "batch_error", "value": str(exc)})
 
-    def _on_login_event(self, event: LoginEvent) -> None:
-        self._events.put({"kind": "login_event", "value": event})
+    def _on_login_event(self, event: LoginEvent, generation: Any = None) -> None:
+        self._events.put({"kind": "login_event", "value": event, "generation": generation})
 
     def _drain_events(self) -> None:
         while True:
@@ -226,6 +227,7 @@ class AppPucBridge:
                 event: LoginEvent = item["value"]
                 self._write({
                     "type": "event", "event": event.event_type.value,
+                    "generation": item.get("generation"),
                     "timestamp": event.timestamp, "phase": event.phase.value,
                     "message": self._safe_text(event.message), "code": event.code,
                     "payload": _json_value(event.payload), "online": self._event_online(event),

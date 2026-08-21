@@ -83,12 +83,13 @@ try {
     Assert-True (-not [bool]$batch.ok) 'Batch without an authenticated session should fail'
     Assert-True ([string]$batch.error.message -match 'session') 'Batch error should explain missing session'
 
-    Send-Command $process @{ command = 'login'; account = 'demo'; password = 'do-not-print'; server = 'http://127.0.0.1:1'; request_timeout = 0.2; websocket_timeout = 0.2 }
+    Send-Command $process @{ command = 'login'; generation = 7; account = 'demo'; password = 'do-not-print'; server = 'http://127.0.0.1:1'; request_timeout = 0.2; websocket_timeout = 0.2 }
     $accepted = Read-Event $process
     Assert-True ([bool]$accepted.ok) 'Valid login request should be accepted'
     $state = Read-Event $process
     Assert-Equal $state.type 'event' 'Login lifecycle event type'
     Assert-Equal $state.event 'connecting' 'Login should emit connecting state'
+    Assert-Equal $state.generation 7 'Login event generation'
     Assert-True (-not [bool]$state.online) 'Connecting state should be offline until authentication succeeds'
     $serialized = $accepted | ConvertTo-Json -Compress -Depth 10
     Assert-True ($serialized -notmatch 'do-not-print') 'Login response exposed the password'

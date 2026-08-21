@@ -10,3 +10,7 @@
 *.log
 .worktrees/
 /docs
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+.pytest_cache/

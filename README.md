@@ -24,6 +24,21 @@ puc-config\scripts\Invoke-PucScript.cmd Install-PucConfigToolShortcut.ps1
 
 命令会在当前用户桌面创建 `PUC Toolkit.lnk`。如果仓库或技能包路径发生变化，再次执行同一命令即可刷新快捷方式。双击桌面的 `PUC Toolkit`，即可在不显示 PowerShell 或命令提示符窗口的情况下打开图形化配置工具。
 
+## APP 业务页签
+
+`PUC Toolkit` 的“APP 业务”页签提供 APP 账号登录、在线状态显示和批量建群。服务器从与 PUC 配置相同的环境下拉列表中选择，也可以通过“新增环境”加入环境；选择环境后仍可调整 APP 服务器地址。
+
+该功能采用简单的本地 Python 桥接方式，需要 Python 3.10 或更高版本。首次使用时，在仓库根目录安装两个本地包及其依赖：
+
+```powershell
+python -m pip install -e .\app_puc_login
+python -m pip install -e .\app_puc_group_batch
+```
+
+从仓库运行 Toolkit 时，桥接脚本也会直接加载这两个目录中的源码，但仍需要可用的 Python 及登录包依赖。登录后，“在线状态”显示为“在线”才会启用批量建群。
+
+批量建群的成员表每行填写两个字段：`账号` 和 `APP PUC ID`。两项都不能为空；登录账号会作为群主自动加入，不必在成员表中重复填写。设置建群数量后启动任务，可在页签内查看进度、成功数和失败明细。
+
 ## 技能包简介
 
 ### puc-config
@@ -114,6 +129,8 @@ puc-config\scripts\Invoke-PucScript.cmd Install-PucConfigToolShortcut.ps1
 puc-toolkit/
 |-- README.md
 |-- puc-config/             # PUC 配置与账号、人员、License 等管理
+|-- app_puc_login/          # APP 账号登录与在线会话
+|-- app_puc_group_batch/    # 使用在线会话批量创建群
 |-- get-business-log/       # 业务日志采集
 |-- refresh-puc-language/   # PUC 语言资源刷新
 `-- replace-env-dist/       # 前端 dist 构建与环境部署

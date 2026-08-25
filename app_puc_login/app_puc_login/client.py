@@ -20,6 +20,7 @@ from .events import (
     RequestDisconnected,
     RequestTimeout,
     TransportError,
+    redact,
 )
 from .protocol import (
     FrameError,
@@ -43,6 +44,7 @@ class _PendingRequest:
     ready: threading.Event = field(default_factory=threading.Event)
     response: dict[str, Any] | None = None
     error: Exception | None = None
+    unexpected_responses: list[str] = field(default_factory=list)
 
 
 class PucLoginClient:
@@ -57,6 +59,7 @@ class PucLoginClient:
         self._callback: EventCallback | None = None
         self._attempt_authenticated = False
         self._active_session_id: str | None = None
+        self._access_token: str | None = None
         self._pending_lock = threading.Lock()
         self._pending: dict[str, _PendingRequest] = {}
 
@@ -185,6 +188,8 @@ class PucLoginClient:
         self._emit(EventType.CONNECTING, LoginPhase.TOKEN, message="requesting token")
         authorization = build_authorization(config.account, config.password)
         token = transport.request_token(authorization)
+        with self._lock:
+            self._access_token = token
         self._emit(EventType.TOKEN_ACQUIRED, LoginPhase.TOKEN, message="token acquired")
 
         transport.connect()
@@ -271,9 +276,12 @@ class PucLoginClient:
                 body: Any = json.loads(body_text)
             except json.JSONDecodeError:
                 body = body_text
-            if isinstance(body, dict) and self._resolve_pending(body):
-                continue
-            self._emit(EventType.MESSAGE, LoginPhase.ONLINE, payload=body)
+            if isinstance(body, dict):
+                self._emit_protocol("receive", body)
+                if self._resolve_pending(body):
+                    continue
+            else:
+                self._emit(EventType.MESSAGE, LoginPhase.ONLINE, payload=body)
 
     def request(
         self, payload: dict[str, Any], *, expected_ack: str, timeout: float = 30.0,
@@ -283,29 +291,31 @@ class PucLoginClient:
         request_payload = dict(payload)
         guid = str(uuid.uuid4())
         request_payload["cmd_guid"] = guid
-        pending = _PendingRequest(expected_ack)
-        with self._pending_lock:
-            if not self._attempt_authenticated or self._transport is None:
-                raise ClientStateError("client is not authenticated")
-            self._pending[guid] = pending
+        response = self.post_authenticated(request_payload)
+        command = response.get("cmd_name")
+        if command != expected_ack:
+            raise TransportError(
+                f"authenticated request returned unexpected ACK: {command!r}; "
+                f"expected {expected_ack!r}"
+            )
+        response_guid = response.get("cmd_guid")
+        if response_guid not in (None, "", guid):
+            raise TransportError(
+                f"authenticated response cmd_guid mismatch: {response_guid!r}"
+            )
+        return response
+
+    def post_authenticated(self, payload: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
             transport = self._transport
-        try:
-            transport.send_frame(encode_frame(
-                json.dumps(request_payload, separators=(",", ":")), MessageType.DEFAULT
-            ))
-        except Exception:
-            with self._pending_lock:
-                self._pending.pop(guid, None)
-            raise
-        if not pending.ready.wait(timeout):
-            with self._pending_lock:
-                self._pending.pop(guid, None)
-            raise RequestTimeout(f"request timed out: {expected_ack}")
-        if pending.error is not None:
-            raise pending.error
-        if pending.response is None:
-            raise RequestDisconnected("PUC session disconnected")
-        return pending.response
+            token = self._access_token
+        if not self._attempt_authenticated or transport is None or not token:
+            raise ClientStateError("client is not authenticated")
+        request_payload = dict(payload)
+        self._emit_protocol("send", request_payload)
+        response = transport.post_authenticated(request_payload, token)
+        self._emit_protocol("receive", response)
+        return response
 
     def _resolve_pending(self, body: dict[str, Any]) -> bool:
         guid = body.get("cmd_guid")
@@ -314,12 +324,38 @@ class PucLoginClient:
             return False
         with self._pending_lock:
             pending = self._pending.get(guid)
-            if pending is None or command != pending.expected_ack:
+            if pending is None:
+                return False
+            if command != pending.expected_ack:
+                pending.unexpected_responses.append(self._response_summary(body))
                 return False
             self._pending.pop(guid)
             pending.response = body
         pending.ready.set()
         return True
+
+    @staticmethod
+    def _response_summary(body: dict[str, Any]) -> str:
+        command = str(body.get("cmd_name") or "unknown_command")
+        parts = [command]
+        if "result" in body:
+            parts.append(f"result={body.get('result')}")
+        message = str(body.get("message") or body.get("msg") or "").strip()
+        if message:
+            parts.append(f"message={message[:200]}")
+        return " ".join(parts)
+
+    def _emit_protocol(self, direction: str, payload: Any) -> None:
+        safe_payload = redact(payload)
+        serialized = json.dumps(
+            safe_payload, ensure_ascii=False, separators=(",", ":"), default=str,
+        )
+        self._emit(
+            EventType.MESSAGE,
+            LoginPhase.ONLINE,
+            message=f"[protocol-{direction}] {serialized}",
+            payload=safe_payload,
+        )
 
     def _fail_pending(self, error: Exception) -> None:
         with self._pending_lock:
@@ -330,6 +366,8 @@ class PucLoginClient:
             item.ready.set()
 
     def _clear_session(self) -> None:
+        with self._lock:
+            self._access_token = None
         session_id = self._active_session_id
         self._active_session_id = None
         if session_id is not None:

@@ -28,7 +28,8 @@ def _add_local_packages() -> None:
 
 _add_local_packages()
 
-from app_puc_group_batch import AppGroupMemberInput, AppPucGroupBatchService
+from app_puc_group_batch import AppPucGroupBatchService
+from app_puc_group_batch.local_config import save_profile
 from app_puc_login import LoginConfig, PucLoginClient, get_active_app_session
 from app_puc_login.events import LoginEvent
 
@@ -64,6 +65,7 @@ class AppPucBridge:
         self._batch_thread: threading.Thread | None = None
         self._batch_lock = threading.Lock()
         self._password = ""
+        self._pending_profile: tuple[Any, str, str, str, str] | None = None
 
     def run(self) -> None:
         reader = threading.Thread(target=self._read_commands, name="app-puc-bridge-input", daemon=True)
@@ -157,7 +159,18 @@ class AppPucBridge:
             options["reconnect_delays"] = tuple(float(item) for item in options["reconnect_delays"])
         config = LoginConfig(**options)
         generation = command.get("generation")
-        self.client.start(config, lambda event, value=generation: self._on_login_event(event, value))
+        pending_profile = None
+        if command.get("save_profile"):
+            environment = str(command.get("environment") or "").strip()
+            if not environment:
+                raise ValueError("environment is required when saving an APP profile")
+            pending_profile = (generation, environment, config.server, config.account, password)
+        self._pending_profile = pending_profile
+        try:
+            self.client.start(config, lambda event, value=generation: self._on_login_event(event, value))
+        except Exception:
+            self._pending_profile = None
+            raise
         self._write({"type": "response", "command": "login", "generation": generation, "ok": True, "data": {"state": "starting"}})
 
     def _stop(self) -> None:
@@ -173,40 +186,35 @@ class AppPucBridge:
     def _batch(self, command: dict[str, Any]) -> None:
         if not self._online():
             raise ValueError("active APP PUC session is required")
-        members = command.get("members")
-        if not isinstance(members, list) or not members:
-            raise ValueError("members must be a non-empty array")
         try:
             group_count = int(command.get("group_count"))
         except (TypeError, ValueError):
             raise ValueError("group_count must be a positive integer") from None
         if group_count <= 0:
             raise ValueError("group_count must be a positive integer")
-        inputs = []
-        for member in members:
-            if not isinstance(member, dict):
-                raise ValueError("each member must be an object")
-            inputs.append(AppGroupMemberInput(
-                account=str(member.get("account") or ""),
-                app_puc_id=str(member.get("app_puc_id") or ""),
-            ))
+        try:
+            member_count = int(command.get("member_count"))
+        except (TypeError, ValueError):
+            raise ValueError("member_count must be an integer of at least 3") from None
+        if member_count < 3:
+            raise ValueError("member_count must be an integer of at least 3")
         generation = command.get("generation")
         with self._batch_lock:
             if self._batch_is_running():
                 raise RuntimeError("another APP PUC group batch is running")
             self._batch_thread = threading.Thread(
                 target=self._run_batch,
-                args=(inputs, group_count, generation),
+                args=(member_count, group_count, generation),
                 name="app-puc-group-batch",
                 daemon=True,
             )
             self._batch_thread.start()
         self._write({"type": "response", "command": "batch_create_groups", "generation": generation, "ok": True, "data": {"state": "started"}})
 
-    def _run_batch(self, members: list[AppGroupMemberInput], group_count: int, generation: Any) -> None:
+    def _run_batch(self, member_count: int, group_count: int, generation: Any) -> None:
         try:
             summary = self.batch_service.create_groups(
-                members=members,
+                member_count=member_count,
                 group_count=group_count,
                 on_progress=lambda progress: self._events.put({"kind": "batch_progress", "value": progress, "generation": generation}),
             )
@@ -216,6 +224,20 @@ class AppPucBridge:
 
     def _on_login_event(self, event: LoginEvent, generation: Any = None) -> None:
         self._events.put({"kind": "login_event", "value": event, "generation": generation})
+        pending = self._pending_profile
+        if pending is None or pending[0] != generation:
+            return
+        if event.event_type.value == "login_success":
+            self._pending_profile = None
+            try:
+                save_profile(*pending[1:])
+            except Exception as exc:
+                self._events.put({
+                    "kind": "profile_save_error", "value": str(exc),
+                    "generation": generation,
+                })
+        elif event.event_type.value in {"error", "stopped"}:
+            self._pending_profile = None
 
     def _drain_events(self) -> None:
         while True:
@@ -240,6 +262,12 @@ class AppPucBridge:
                 self._write({"type": "response", "command": "batch_create_groups", "generation": item.get("generation"), "ok": True, "data": {"state": "completed", "summary": _json_value(item["value"])}})
             elif kind == "batch_error":
                 self._error("batch_create_groups", str(item["value"]), item.get("generation"))
+            elif kind == "profile_save_error":
+                self._write({
+                    "type": "event", "event": "profile_save_error",
+                    "generation": item.get("generation"),
+                    "message": self._safe_text(str(item["value"])),
+                })
 
     def _shutdown(self) -> None:
         if self.client.is_running:

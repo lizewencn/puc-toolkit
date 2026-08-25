@@ -1318,7 +1318,6 @@ if ($tabEnabled['app-business']) {
             Form=$form
             ScriptRoot=$PSScriptRoot
             WriteLog=$writeBusinessLogAction
-            GetConfigRoot={ Get-PucConfigRoot }
             GetEnvironments={ @(Get-EnvironmentEntries) }
             AddEnvironment={
                 if (-not $mainTabs.TabPages.Contains($configTab)) { throw 'PUC 配置页未启用，无法新增环境。' }

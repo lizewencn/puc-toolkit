@@ -1,6 +1,6 @@
 ---
 name: puc-config
-description: Configure a named PUC environment through its configuration API, including reusable captcha login, saved-token validation, account creation, single or batch account-information completion, account updates, single or batch dispatcher password reset, batch personnel creation, configuration and License import/export, permission menu import, login-policy switches, and the graphical launcher's desktop shortcut. Use when Codex needs to authenticate to PUC; create accounts; complete or normalize one or many existing accounts from the environment's current systems, access points, and root organizations; update editable account information; reset passwords; create personnel; transfer configuration or License files; import permission menus; query or set first-login password validation; configure duplicate-login forced logout; open the PUC configuration GUI; or create or refresh its desktop entry point.
+description: Configure a named PUC environment through its configuration API, including reusable captcha login, saved-token validation, account creation and updates, dispatcher password reset, batch personnel creation, configuration and License transfer, permission menus, login-policy switches, and the desktop shortcut.
 ---
 
 # PUC Config

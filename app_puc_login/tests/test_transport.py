@@ -79,6 +79,32 @@ def test_token_request_uses_source_server_without_probe(config):
     ]
 
 
+def test_business_request_posts_json_to_has_with_login_token(config):
+    session = FakeSession(FakeResponse({"result": 0, "account_list": []}))
+    transport = PucTransport(config, session=session)
+
+    payload = transport.post_authenticated(
+        {"cmd_name": "page_piece_account_list_request", "keyword": "lzw"},
+        "token-1",
+    )
+
+    assert payload == {"result": 0, "account_list": []}
+    assert session.calls == [
+        (
+            "https://puc.test:16663/has",
+            {
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Authorization": "Bearer token-1",
+                },
+                "json": {"cmd_name": "page_piece_account_list_request", "keyword": "lzw"},
+                "timeout": 15.0,
+                "verify": True,
+            },
+        )
+    ]
+
+
 @pytest.mark.parametrize("payload", [{"result": 12}, {"result": 0}, {"result": 0, "access_token": ""}])
 def test_token_request_rejects_business_failure(config, payload):
     transport = PucTransport(config, session=FakeSession(FakeResponse(payload)))
@@ -120,3 +146,16 @@ def test_network_exception_becomes_transport_error(config):
 
     with pytest.raises(TransportError, match="token request failed"):
         transport.request_token("Basic abc")
+
+
+def test_localized_windows_socket_error_is_reported_in_english(config):
+    localized = OSError("[WinError 10013] localized socket access message")
+    session = FakeSession(FakeResponse({}, status_error=localized))
+    transport = PucTransport(config, session=session)
+
+    with pytest.raises(TransportError) as caught:
+        transport.request_token("Basic abc")
+
+    message = str(caught.value)
+    assert message == "token request failed: socket access denied (WinError 10013)"
+    assert message.isascii()

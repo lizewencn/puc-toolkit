@@ -15,8 +15,14 @@ class RequestTransport:
         self.incoming = []
         self.ready = threading.Event()
         self.closed = threading.Event()
+        self.authenticated_response = {"result": 0, "account_list": []}
 
     def request_token(self, _): return "token"
+    def post_authenticated(self, payload, token):
+        self.http_request = (payload, token)
+        if callable(self.authenticated_response):
+            return self.authenticated_response(payload)
+        return self.authenticated_response
     def connect(self): pass
     def close(self): self.closed.set(); self.ready.set()
     def send_frame(self, frame): self.sent.append(frame)
@@ -45,37 +51,90 @@ def wait_for(predicate):
     raise AssertionError("timeout")
 
 
-def logged_in_client():
+def logged_in_client(events=None):
     transport = RequestTransport()
     transport.push({"result": 0, "puc_id": "1", "user_id": "owner"}, MessageType.AUTH_ACK)
     client = PucLoginClient(transport_factory=lambda _: transport)
-    client.start(config(), lambda _: None)
+    client.start(config(), (events if events is not None else []).append)
     wait_for(lambda: len(transport.sent) == 1)
     return client, transport
 
 
-def test_request_correlates_guid_and_expected_ack():
+def test_request_posts_http_and_returns_matching_response():
     client, transport = logged_in_client()
-    result = {}
-    thread = threading.Thread(target=lambda: result.update(client.request(
+    transport.authenticated_response = lambda payload: {
+        "cmd_name": "chat_create_group_ack",
+        "cmd_guid": payload["cmd_guid"],
+        "result": 0,
+    }
+
+    result = client.request(
         {"cmd_name": "chat_create_group"}, expected_ack="chat_create_group_ack",
-    )))
-    thread.start()
-    wait_for(lambda: len(transport.sent) == 2)
-    sent = json.loads(decode_frame(transport.sent[-1]).body)
-    transport.push({"cmd_name": "wrong_ack", "cmd_guid": sent["cmd_guid"], "result": 0})
-    time.sleep(0.03)
-    assert thread.is_alive()
-    transport.push({"cmd_name": "chat_create_group_ack", "cmd_guid": sent["cmd_guid"], "result": 0})
-    thread.join(1)
+    )
+
+    assert result["result"] == 0
+    sent, token = transport.http_request
+    assert sent["cmd_name"] == "chat_create_group"
+    assert len(sent["cmd_guid"]) == 36
+    assert token == "token"
+    assert len(transport.sent) == 1
+    client.stop()
+
+
+def test_request_rejects_unexpected_http_ack_and_unauthenticated_error():
+    client, transport = logged_in_client()
+    transport.authenticated_response = {"cmd_name": "wrong_ack", "result": 0}
+    with pytest.raises(Exception, match="wrong_ack"):
+        client.request({"cmd_name": "x"}, expected_ack="x_ack")
+    client.stop()
+    with pytest.raises(ClientStateError):
+        client.request({"cmd_name": "x"}, expected_ack="x_ack")
+
+
+def test_authenticated_http_request_reuses_private_login_token():
+    client, transport = logged_in_client()
+
+    response = client.post_authenticated({"cmd_name": "page_piece_account_list_request"})
+
+    assert response == {"result": 0, "account_list": []}
+    assert transport.http_request == (
+        {"cmd_name": "page_piece_account_list_request"}, "token"
+    )
+    client.stop()
+
+
+def test_protocol_events_log_http_request_and_matching_response():
+    events = []
+    client, transport = logged_in_client(events)
+    transport.authenticated_response = lambda payload: {
+        "cmd_name": "chat_create_group_ack",
+        "cmd_guid": payload["cmd_guid"],
+        "result": 0,
+    }
+    result = client.request(
+        {"cmd_name": "chat_create_group", "password": "hidden"},
+        expected_ack="chat_create_group_ack",
+    )
+
+    messages = [event.message for event in events if event.event_type.value == "message"]
+    assert any(message.startswith("[protocol-send] ") and '"password":"***"' in message
+               for message in messages)
+    assert any(message.startswith("[protocol-receive] ") and
+               '"cmd_name":"chat_create_group_ack"' in message for message in messages)
     assert result["result"] == 0
     client.stop()
 
 
-def test_request_timeout_and_unauthenticated_error():
-    client, _ = logged_in_client()
-    with pytest.raises(RequestTimeout):
-        client.request({"cmd_name": "x"}, expected_ack="x_ack", timeout=0.01)
+def test_protocol_events_log_authenticated_http_request_and_response():
+    events = []
+    client, _ = logged_in_client(events)
+
+    client.post_authenticated({"cmd_name": "page_piece_account_list_request"})
+
+    messages = [event.message for event in events if event.event_type.value == "message"]
+    assert any(message.startswith("[protocol-send] ") and
+               '"cmd_name":"page_piece_account_list_request"' in message
+               for message in messages)
+    assert any(message == '[protocol-receive] {"result":0,"account_list":[]}'
+               for message in messages)
     client.stop()
-    with pytest.raises(ClientStateError):
-        client.request({"cmd_name": "x"}, expected_ack="x_ack")

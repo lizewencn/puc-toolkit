@@ -3,11 +3,15 @@ from .models import (
     AppGroupBatchResult, AppGroupBatchSummary, AppGroupInputError,
     AppGroupItemStatus, AppGroupMemberInput, AppGroupSessionUnavailableError,
 )
-from .service import AppPucGroupBatchService
+from .service import (
+    AppDispatcherSearchError, AppPucGroupBatchService,
+    dispatcher_account_prefix, search_dispatchers,
+)
 
 __all__ = [
     "AppGroupBatchBusyError", "AppGroupBatchError", "AppGroupBatchProgress",
     "AppGroupBatchResult", "AppGroupBatchSummary", "AppGroupInputError",
     "AppGroupItemStatus", "AppGroupMemberInput", "AppGroupSessionUnavailableError",
-    "AppPucGroupBatchService",
+    "AppDispatcherSearchError", "AppPucGroupBatchService",
+    "dispatcher_account_prefix", "search_dispatchers",
 ]

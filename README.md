@@ -24,9 +24,9 @@ puc-config\scripts\Invoke-PucScript.cmd Install-PucConfigToolShortcut.ps1
 
 命令会在当前用户桌面创建 `PUC Toolkit.lnk`。如果仓库或技能包路径发生变化，再次执行同一命令即可刷新快捷方式。双击桌面的 `PUC Toolkit`，即可在不显示 PowerShell 或命令提示符窗口的情况下打开图形化配置工具。
 
-## APP 业务页签
+## APP 业务技能
 
-`PUC Toolkit` 的“APP 业务”页签提供 APP 账号登录、在线状态显示和批量建群。服务器从与 PUC 配置相同的环境下拉列表中选择，也可以通过“新增环境”加入环境；选择环境后仍可调整 APP 服务器地址。
+`puc-app-business` 是独立于 `puc-config` 的顶层技能包，用于 APP 账号登录和批量建群。两者共用此仓库以及 `puc-config` 已选择的配置根目录，但 APP 资料独立写入 `app-business.json`，不混入 `config.json`，也不共享登录 token 或接口调用；agent 应优先使用该 skill 的命令行工作流。
 
 该功能采用简单的本地 Python 桥接方式，需要 Python 3.10 或更高版本。首次使用时，在仓库根目录安装两个本地包及其依赖：
 
@@ -35,11 +35,15 @@ python -m pip install -e .\app_puc_login
 python -m pip install -e .\app_puc_group_batch
 ```
 
-从仓库运行 Toolkit 时，桥接脚本也会直接加载这两个目录中的源码，但仍需要可用的 Python 及登录包依赖。登录后，“在线状态”显示为“在线”才会启用批量建群。
+agent 可按照 [`puc-app-business/SKILL.md`](puc-app-business/SKILL.md) 从仓库根目录运行 `python -m app_puc_group_batch`。首次使用可通过 `--save-profile` 保存环境、账号和明文密码，后续按环境名和账号复用；token 永远只存在于登录进程内存中。`PUC Toolkit` 的“APP 业务”页签是备用 GUI 入口，也会保存并复用同一份 APP 资料；若 agent 进程因本地网络或终端安全策略无法访问 APP 地址，可改用该 GUI 执行相同业务。
 
-批量建群时点击“添加成员”，可按账号或名称搜索当前服务器环境中的调度员，并一次勾选多个成员；工具会自动把调度账号和对应的 `APP PUC ID` 加入成员表，并忽略已经添加的账号。登录账号会作为群主自动加入，不必重复选择。设置建群数量后启动任务，可在页签内查看进度、成功数和失败明细。
+批量建群只需设置群数量和成员数量。成员数量包含当前登录账号，默认值和最小值均为 3；登录账号会作为群主自动加入。工具从当前登录账号中去掉末尾全部数字作为前缀（例如 `lzw93001` 使用 `lzw`），通过 APP 登录会话的 HTTPS `/has` 接口查询同前缀调度员，排除当前账号后按接口顺序选择所需成员。若匹配成员不足，整批任务会在发送任何建群请求前失败。CLI 和备用 GUI 均不支持手动添加、选择或删除成员。
 
 ## 技能包简介
+
+### puc-app-business
+
+`puc-app-business` 是 APP 业务的 agent 主入口，使用独立 APP 登录会话执行自动成员批量建群。
 
 ### puc-config
 

@@ -12,6 +12,7 @@ class AppGroupSessionUnavailableError(AppGroupBatchError): pass
 class AppGroupMemberInput:
     account: str
     app_puc_id: str
+    alias: str = ""
 
 
 class AppGroupItemStatus(str, Enum):
@@ -33,6 +34,7 @@ class AppGroupBatchResult:
     rename_code: int | None = None
     rename_message: str = ""
     status: AppGroupItemStatus = AppGroupItemStatus.CREATE_FAILED
+    members: tuple[dict[str, str], ...] = ()
 
 
 @dataclass(frozen=True)

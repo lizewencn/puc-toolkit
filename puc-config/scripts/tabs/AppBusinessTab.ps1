@@ -5,7 +5,7 @@
         [hashtable]$Context
     )
 
-    foreach ($requiredKey in @('Form','ScriptRoot','GetConfigRoot','GetEnvironments','AddEnvironment','WriteLog')) {
+    foreach ($requiredKey in @('Form','ScriptRoot','GetEnvironments','AddEnvironment','WriteLog')) {
         if (-not $Context.ContainsKey($requiredKey) -or $null -eq $Context[$requiredKey]) {
             throw "APP 业务页缺少上下文：$requiredKey"
         }
@@ -239,20 +239,19 @@
     $groupCountInput.Margin = New-Object Windows.Forms.Padding(0,5,12,0)
     $batchToolbar.Controls.Add($groupCountInput)
 
-    $addMemberButton = New-Object Windows.Forms.Button
-    $addMemberButton.Text = '添加成员'
-    $addMemberButton.AccessibleName = 'Select dispatchers'
-    $addMemberButton.AutoSize = $true
-    $addMemberButton.Margin = New-Object Windows.Forms.Padding(0,2,6,2)
-    & $styleButton $addMemberButton $false
-    $batchToolbar.Controls.Add($addMemberButton)
+    $memberCountLabel = New-Object Windows.Forms.Label
+    $memberCountLabel.Text = '成员数量（含自己）'
+    $memberCountLabel.AutoSize = $true
+    $memberCountLabel.Margin = New-Object Windows.Forms.Padding(0,9,4,0)
+    $batchToolbar.Controls.Add($memberCountLabel)
 
-    $removeMemberButton = New-Object Windows.Forms.Button
-    $removeMemberButton.Text = '删除成员'
-    $removeMemberButton.AutoSize = $true
-    $removeMemberButton.Margin = New-Object Windows.Forms.Padding(0,2,12,2)
-    & $styleButton $removeMemberButton $false
-    $batchToolbar.Controls.Add($removeMemberButton)
+    $memberCountInput = New-Object Windows.Forms.NumericUpDown
+    $memberCountInput.Minimum = 3
+    $memberCountInput.Maximum = 100
+    $memberCountInput.Value = 3
+    $memberCountInput.Width = 72
+    $memberCountInput.Margin = New-Object Windows.Forms.Padding(0,5,12,0)
+    $batchToolbar.Controls.Add($memberCountInput)
 
     $batchButton = New-Object Windows.Forms.Button
     $batchButton.Text = '开始批量建群'
@@ -270,28 +269,6 @@
     $batchProgressLabel.TextAlign = [Drawing.ContentAlignment]::MiddleLeft
     $batchPanel.Controls.Add($batchProgressLabel,0,1)
 
-    $batchSplit = New-Object Windows.Forms.SplitContainer
-    $batchSplit.Dock = [Windows.Forms.DockStyle]::Fill
-    $batchSplit.Orientation = [Windows.Forms.Orientation]::Vertical
-    $batchSplit.SplitterDistance = 260
-    $batchSplit.Margin = New-Object Windows.Forms.Padding(0)
-    $batchPanel.Controls.Add($batchSplit,0,2)
-
-    $memberGrid = New-Object Windows.Forms.DataGridView
-    $memberGrid.Dock = [Windows.Forms.DockStyle]::Fill
-    $memberGrid.AllowUserToAddRows = $false
-    $memberGrid.AllowUserToDeleteRows = $false
-    $memberGrid.AllowUserToResizeRows = $false
-    $memberGrid.RowHeadersVisible = $false
-    $memberGrid.MultiSelect = $true
-    $memberGrid.SelectionMode = [Windows.Forms.DataGridViewSelectionMode]::FullRowSelect
-    $memberGrid.BackgroundColor = [Drawing.Color]::White
-    $memberGrid.AutoSizeColumnsMode = [Windows.Forms.DataGridViewAutoSizeColumnsMode]::Fill
-    [void]$memberGrid.Columns.Add('account','成员账号')
-    [void]$memberGrid.Columns.Add('app_puc_id','APP PUC ID')
-    [void]$memberGrid.Rows.Add()
-    $batchSplit.Panel1.Controls.Add($memberGrid)
-
     $resultGrid = New-Object Windows.Forms.DataGridView
     $resultGrid.Dock = [Windows.Forms.DockStyle]::Fill
     $resultGrid.ReadOnly = $true
@@ -303,16 +280,20 @@
     $resultGrid.SelectionMode = [Windows.Forms.DataGridViewSelectionMode]::FullRowSelect
     $resultGrid.BackgroundColor = [Drawing.Color]::White
     foreach ($column in @(
-        @('index','序号'),@('group_id','群 ID'),@('final_subject','最终群名'),
-        @('create_code','创建码'),@('rename_code','改名码'),@('status','状态')
+        @('index','序号'),@('group_id','群 ID'),@('final_subject','最终群名'),@('members','成员'),
+        @('create_code','创建码'),@('create_message','创建错误'),
+        @('rename_code','改名码'),@('rename_message','改名错误'),@('status','状态')
     )) { [void]$resultGrid.Columns.Add($column[0],$column[1]) }
     $resultGrid.Columns['index'].Width = 48
     $resultGrid.Columns['group_id'].Width = 82
-    $resultGrid.Columns['final_subject'].AutoSizeMode = [Windows.Forms.DataGridViewAutoSizeColumnMode]::Fill
+    $resultGrid.Columns['final_subject'].Width = 130
+    $resultGrid.Columns['members'].AutoSizeMode = [Windows.Forms.DataGridViewAutoSizeColumnMode]::Fill
     $resultGrid.Columns['create_code'].Width = 62
+    $resultGrid.Columns['create_message'].Width = 180
     $resultGrid.Columns['rename_code'].Width = 62
+    $resultGrid.Columns['rename_message'].Width = 180
     $resultGrid.Columns['status'].Width = 100
-    $batchSplit.Panel2.Controls.Add($resultGrid)
+    $batchPanel.Controls.Add($resultGrid,0,2)
 
     $state = [pscustomobject]@{
         Disposed=$false
@@ -341,8 +322,6 @@
         ReceiveMessageAction=$null
         StartBatchAction=$null
         StartLoginAction=$null
-        AddMembersAction=$null
-        ShowMemberPickerAction=$null
     }
 
     $getValue = {
@@ -353,173 +332,20 @@
         return $property.Value
     }.GetNewClosure()
 
-    $addMembers = {
-        param($Members, [Parameter(ValueFromRemainingArguments)]$RemainingMembers)
-        $selectedMembers = @($Members) + @($RemainingMembers)
-        $existing = @{}
-        foreach ($row in @($memberGrid.Rows)) {
-            if ($row.IsNewRow) { continue }
-            $account = ([string]$row.Cells['account'].Value).Trim()
-            if (-not [string]::IsNullOrWhiteSpace($account)) { $existing[$account.ToLowerInvariant()] = $true }
-        }
-        foreach ($member in $selectedMembers) {
-            $account = ([string](& $getValue $member 'account')).Trim()
-            $appPucId = ([string](& $getValue $member 'appPucId')).Trim()
-            if ([string]::IsNullOrWhiteSpace($account) -or [string]::IsNullOrWhiteSpace($appPucId)) { continue }
-            $key = $account.ToLowerInvariant()
-            if ($existing.ContainsKey($key)) { continue }
-            $emptyRow = @($memberGrid.Rows | Where-Object {
-                -not $_.IsNewRow -and [string]::IsNullOrWhiteSpace([string]$_.Cells['account'].Value) -and
-                [string]::IsNullOrWhiteSpace([string]$_.Cells['app_puc_id'].Value)
-            } | Select-Object -First 1)
-            if ($emptyRow.Count -eq 1) {
-                $emptyRow[0].Cells['account'].Value = $account
-                $emptyRow[0].Cells['app_puc_id'].Value = $appPucId
+    $formatMembers = {
+        param($Members)
+        $labels = foreach ($member in @($Members)) {
+            $account = [string](& $getValue $member 'account')
+            $alias = [string](& $getValue $member 'alias')
+            if ([string]::IsNullOrWhiteSpace($account)) { continue }
+            if ([string]::IsNullOrWhiteSpace($alias) -or $alias -eq $account) {
+                $account
             } else {
-                [void]$memberGrid.Rows.Add($account,$appPucId)
+                "$alias($account)"
             }
-            $existing[$key] = $true
         }
+        return ($labels -join ', ')
     }.GetNewClosure()
-    $state.AddMembersAction = $addMembers
-
-    $resolveConfigRoot = {
-        $configRoot = [string](& $Context.GetConfigRoot)
-        if ([string]::IsNullOrWhiteSpace($configRoot)) { throw 'PUC 配置路径为空，请先设置配置路径。' }
-        return $configRoot
-    }.GetNewClosure()
-
-    $reportSearchError = {
-        param([string]$Message)
-        if ([string]::IsNullOrWhiteSpace($Message)) { $Message = '未知搜索错误' }
-        & $Context['WriteLog'] 'APP业务' "[member-search-error] $Message"
-    }.GetNewClosure()
-
-    $showMemberPicker = {
-        if ($null -eq $environmentBox.SelectedItem) { throw '请先选择服务器环境。' }
-        $environmentName = [string]$environmentBox.SelectedItem.Name
-        $configRoot = & $resolveConfigRoot
-        $dialog = New-Object Windows.Forms.Form
-        $dialog.Text = '选择调度员'
-        $dialog.StartPosition = [Windows.Forms.FormStartPosition]::CenterParent
-        $dialog.Size = New-Object Drawing.Size(720,520)
-        $dialog.MinimumSize = New-Object Drawing.Size(620,420)
-        $dialog.ShowInTaskbar = $false
-
-        $pickerLayout = New-Object Windows.Forms.TableLayoutPanel
-        $pickerLayout.Dock = [Windows.Forms.DockStyle]::Fill
-        $pickerLayout.Padding = New-Object Windows.Forms.Padding(12)
-        $pickerLayout.ColumnCount = 1
-        $pickerLayout.RowCount = 3
-        [void]$pickerLayout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute,42)))
-        [void]$pickerLayout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Percent,100)))
-        [void]$pickerLayout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute,44)))
-        $dialog.Controls.Add($pickerLayout)
-
-        $searchPanel = New-Object Windows.Forms.TableLayoutPanel
-        $searchPanel.Dock = [Windows.Forms.DockStyle]::Fill
-        $searchPanel.ColumnCount = 3
-        [void]$searchPanel.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Percent,100)))
-        [void]$searchPanel.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute,88)))
-        [void]$searchPanel.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute,150)))
-        $queryBox = New-Object Windows.Forms.TextBox
-        $queryBox.Dock = [Windows.Forms.DockStyle]::Fill
-        $queryBox.Margin = New-Object Windows.Forms.Padding(0,5,8,5)
-        $searchPanel.Controls.Add($queryBox,0,0)
-        $searchButton = New-Object Windows.Forms.Button
-        $searchButton.Text = '搜索'
-        $searchButton.Dock = [Windows.Forms.DockStyle]::Fill
-        $searchButton.Margin = New-Object Windows.Forms.Padding(0,2,8,2)
-        & $styleButton $searchButton $false
-        $searchPanel.Controls.Add($searchButton,1,0)
-        $searchStatus = New-Object Windows.Forms.Label
-        $searchStatus.Text = '输入账号或名称搜索'
-        $searchStatus.AutoEllipsis = $true
-        $searchStatus.Dock = [Windows.Forms.DockStyle]::Fill
-        $searchStatus.TextAlign = [Drawing.ContentAlignment]::MiddleLeft
-        $searchPanel.Controls.Add($searchStatus,2,0)
-        $pickerLayout.Controls.Add($searchPanel,0,0)
-
-        $pickerGrid = New-Object Windows.Forms.DataGridView
-        $pickerGrid.Dock = [Windows.Forms.DockStyle]::Fill
-        $pickerGrid.AllowUserToAddRows = $false
-        $pickerGrid.AllowUserToDeleteRows = $false
-        $pickerGrid.RowHeadersVisible = $false
-        $pickerGrid.SelectionMode = [Windows.Forms.DataGridViewSelectionMode]::FullRowSelect
-        $pickerGrid.MultiSelect = $true
-        $pickerGrid.AutoSizeColumnsMode = [Windows.Forms.DataGridViewAutoSizeColumnsMode]::Fill
-        $checkColumn = New-Object Windows.Forms.DataGridViewCheckBoxColumn
-        $checkColumn.Name = 'selected'; $checkColumn.HeaderText = '选择'; $checkColumn.Width = 52
-        $checkColumn.AutoSizeMode = [Windows.Forms.DataGridViewAutoSizeColumnMode]::None
-        [void]$pickerGrid.Columns.Add($checkColumn)
-        [void]$pickerGrid.Columns.Add('name','名称')
-        [void]$pickerGrid.Columns.Add('account','调度账号')
-        [void]$pickerGrid.Columns.Add('app_puc_id','APP PUC ID')
-        $pickerGrid.Columns['app_puc_id'].Width = 110
-        $pickerLayout.Controls.Add($pickerGrid,0,1)
-
-        $buttonPanel = New-Object Windows.Forms.FlowLayoutPanel
-        $buttonPanel.Dock = [Windows.Forms.DockStyle]::Fill
-        $buttonPanel.FlowDirection = [Windows.Forms.FlowDirection]::RightToLeft
-        $confirmButton = New-Object Windows.Forms.Button
-        $confirmButton.Text = '添加所选'; $confirmButton.Width = 96; $confirmButton.Height = 34
-        & $styleButton $confirmButton $true
-        $cancelButton = New-Object Windows.Forms.Button
-        $cancelButton.Text = '取消'; $cancelButton.Width = 88; $cancelButton.Height = 34
-        $cancelButton.DialogResult = [Windows.Forms.DialogResult]::Cancel
-        & $styleButton $cancelButton $false
-        $buttonPanel.Controls.Add($confirmButton); $buttonPanel.Controls.Add($cancelButton)
-        $pickerLayout.Controls.Add($buttonPanel,0,2)
-        $dialog.CancelButton = $cancelButton
-
-        $runSearch = {
-            $query = $queryBox.Text.Trim()
-            if ([string]::IsNullOrWhiteSpace($query)) { $searchStatus.Text = '请输入搜索关键字'; return }
-            $searchButton.Enabled = $false
-            $searchStatus.Text = '查询中...'
-            $pickerGrid.Rows.Clear()
-            try {
-                $searchScript = Join-Path ([string]$Context.ScriptRoot) 'Invoke-PucAppMemberSearch.ps1'
-                $lines = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $searchScript -Environment $environmentName -Query $query -ConfigRoot $configRoot 2>&1)
-                if ($LASTEXITCODE -ne 0) { throw (($lines | ForEach-Object { [string]$_ }) -join [Environment]::NewLine) }
-                $result = $null
-                for ($index = $lines.Count - 1; $index -ge 0; $index--) {
-                    try { $result = ([string]$lines[$index]) | ConvertFrom-Json; break } catch {}
-                }
-                if ($null -eq $result) { throw '调度员搜索未返回有效结果。' }
-                foreach ($item in @($result.results)) {
-                    [void]$pickerGrid.Rows.Add($false,[string]$item.name,[string]$item.account,[string]$item.appPucId)
-                }
-                $searchStatus.Text = if ($pickerGrid.Rows.Count -eq 0) { '未找到匹配调度员' } else { "找到 $($pickerGrid.Rows.Count) 个调度员" }
-            } catch {
-                $searchStatus.Text = '查询失败'
-                $errorMessage = $_.Exception.Message
-                & $reportSearchError $errorMessage
-                [Windows.Forms.MessageBox]::Show($dialog,$errorMessage,'搜索调度员','OK','Warning') | Out-Null
-            } finally { $searchButton.Enabled = $true }
-        }.GetNewClosure()
-        $searchButton.Add_Click($runSearch)
-        $queryBox.Add_KeyDown(({
-            param($sender,$eventArgs)
-            if ($eventArgs.KeyCode -eq [Windows.Forms.Keys]::Enter) { $eventArgs.SuppressKeyPress = $true; & $runSearch }
-        }.GetNewClosure()))
-        $pickerGrid.Add_CellDoubleClick(({
-            param($sender,$eventArgs)
-            if ($eventArgs.RowIndex -ge 0) { $row = $pickerGrid.Rows[$eventArgs.RowIndex]; $row.Cells['selected'].Value = -not [bool]$row.Cells['selected'].Value }
-        }.GetNewClosure()))
-        $confirmButton.Add_Click(({
-            $pickerGrid.EndEdit()
-            $selected = @($pickerGrid.Rows | Where-Object { [bool]$_.Cells['selected'].Value } | ForEach-Object {
-                [pscustomobject]@{account=[string]$_.Cells['account'].Value;appPucId=[string]$_.Cells['app_puc_id'].Value}
-            })
-            if ($selected.Count -eq 0) { $searchStatus.Text = '请至少选择一个调度员'; return }
-            & $addMembers $selected
-            $dialog.DialogResult = [Windows.Forms.DialogResult]::OK
-            $dialog.Close()
-        }.GetNewClosure()))
-        try { [void]$dialog.ShowDialog($Context.Form) } finally { $dialog.Dispose() }
-    }.GetNewClosure()
-    $state.ShowMemberPickerAction = $showMemberPicker
 
     $setServerAddress = {
         param([string]$Address)
@@ -583,10 +409,8 @@
 
     $updateBatchControls = {
         $editable = -not $state.BatchRunning
-        $memberGrid.Enabled = $editable
         $groupCountInput.Enabled = $editable
-        $addMemberButton.Enabled = $editable
-        $removeMemberButton.Enabled = $editable
+        $memberCountInput.Enabled = $editable
         $batchButton.Enabled = $state.LoginOnline -and $editable
     }.GetNewClosure()
     $state.UpdateBatchControlsAction = $updateBatchControls
@@ -608,9 +432,11 @@
             $rowIndex = $resultGrid.Rows.Add()
             $targetRow = $resultGrid.Rows[$rowIndex]
         } else { $targetRow = $existingRow[0] }
-        foreach ($name in @('index','group_id','final_subject','create_code','rename_code','status')) {
+        foreach ($name in @('index','group_id','final_subject','members','create_code','create_message','rename_code','rename_message','status')) {
             $value = & $getValue $Result $name
-            $targetRow.Cells[$name].Value = if ($null -eq $value) { '' } else { [string]$value }
+            $targetRow.Cells[$name].Value = if ($name -eq 'members') {
+                & $formatMembers $value
+            } elseif ($null -eq $value) { '' } else { [string]$value }
         }
     }.GetNewClosure()
 
@@ -620,29 +446,52 @@
         $eventName = [string](& $getValue $Progress 'event')
         $indexValue = & $getValue $Progress 'index'
         $displayIndex = if ($null -eq $indexValue) { '' } else { [int]$indexValue + 1 }
+        $progressResult = & $getValue $Progress 'result'
         $batchProgressLabel.Text = switch ($eventName) {
             'batch_started' { '批量建群已开始' }
             'group_creating' { "正在创建第 $displayIndex 个群" }
             'group_created' { "第 $displayIndex 个群已创建，准备修改群名" }
             'group_renaming' { "正在修改第 $displayIndex 个群的名称" }
             'group_completed' { "第 $displayIndex 个群处理完成" }
-            'group_failed' { "第 $displayIndex 个群处理失败" }
+            'group_failed' {
+                $status = [string](& $getValue $progressResult 'status')
+                $createCode = & $getValue $progressResult 'create_code'
+                $createMessage = [string](& $getValue $progressResult 'create_message')
+                $renameCode = & $getValue $progressResult 'rename_code'
+                $renameMessage = [string](& $getValue $progressResult 'rename_message')
+                & $Context['WriteLog'] 'APP业务' "[group-failed] index=$displayIndex status=$status create_code=$createCode create_message=$createMessage rename_code=$renameCode rename_message=$renameMessage"
+                if ($status -eq 'create_failed' -and $null -ne $createCode) {
+                    "第 $displayIndex 个群创建失败（错误码：$createCode）"
+                } else { "第 $displayIndex 个群处理失败" }
+            }
             'session_unavailable' { "第 $displayIndex 个群因会话不可用而跳过" }
             'batch_completed' { '批量建群正在汇总结果' }
             default { '批量建群处理中' }
         }
-        & $setResultRow (& $getValue $Progress 'result')
+        & $setResultRow $progressResult
     }.GetNewClosure()
 
     $showBatchSummary = {
         param($Summary)
         if ($null -eq $Summary) { & $setBatchRunning $false '批量建群已结束，但未返回汇总。'; return }
         $resultGrid.Rows.Clear()
-        foreach ($result in @(& $getValue $Summary 'results')) { & $setResultRow $result }
+        foreach ($result in @(& $getValue $Summary 'results')) {
+            & $setResultRow $result
+            $resultStatus = [string](& $getValue $result 'status')
+            if ($resultStatus -ne 'renamed') {
+                $resultIndex = [int](& $getValue $result 'index') + 1
+                $createCode = & $getValue $result 'create_code'
+                $createMessage = [string](& $getValue $result 'create_message')
+                $renameCode = & $getValue $result 'rename_code'
+                $renameMessage = [string](& $getValue $result 'rename_message')
+                & $Context['WriteLog'] 'APP业务' "[group-result] index=$resultIndex status=$resultStatus create_code=$createCode create_message=$createMessage rename_code=$renameCode rename_message=$renameMessage"
+            }
+        }
         $renamed = [int](& $getValue $Summary 'renamed_count')
         $renameFailed = [int](& $getValue $Summary 'rename_failed_count')
         $createFailed = [int](& $getValue $Summary 'create_failed_count')
         $unavailable = [int](& $getValue $Summary 'session_unavailable_count')
+        & $Context['WriteLog'] 'APP业务' "[batch-summary] success=$renamed rename_failed=$renameFailed create_failed=$createFailed session_unavailable=$unavailable"
         & $setBatchRunning $false "完成：成功 $renamed，改名失败 $renameFailed，创建失败 $createFailed，会话不可用 $unavailable"
     }.GetNewClosure()
 
@@ -650,7 +499,6 @@
         param([string]$EventName, [string]$Message = '', $Session = $null)
         if ($EventName -eq 'message') {
             if (-not [string]::IsNullOrWhiteSpace($Message)) {
-                $hintLabel.Text = $Message
                 & $Context['WriteLog'] 'APP业务' "[$EventName] $Message"
             }
             return
@@ -797,6 +645,11 @@
         }
         if ([string](& $getValue $message 'type') -eq 'event') {
             $eventName = [string](& $getValue $message 'event')
+            if ($eventName -eq 'profile_save_error') {
+                $profileError = [string](& $getValue $message 'message')
+                & $Context['WriteLog'] 'APP业务' "[profile-save-error] $profileError"
+                return
+            }
             if ($eventName -eq 'batch_progress') {
                 $generation = & $getValue $message 'generation'
                 if ($null -ne $generation -and [string]$generation -eq [string]$state.BatchGeneration) {
@@ -824,7 +677,9 @@
             if (-not $ok) {
                 $errorObject = & $getValue $message 'error'
                 $errorMessage = [string](& $getValue $errorObject 'message')
-                & $setBatchRunning $false $(if ([string]::IsNullOrWhiteSpace($errorMessage)) {'批量建群失败。'} else {$errorMessage})
+                $displayMessage = if ([string]::IsNullOrWhiteSpace($errorMessage)) {'批量建群失败。'} else {$errorMessage}
+                & $setBatchRunning $false $displayMessage
+                & $Context['WriteLog'] 'APP业务' "[batch-error] $displayMessage"
                 return
             }
             $data = & $getValue $message 'data'
@@ -892,9 +747,17 @@
         if ([string]::IsNullOrWhiteSpace($account)) { throw '请输入 APP 账号。' }
         if ([string]::IsNullOrWhiteSpace($password)) { throw '请输入 APP 密码。' }
         if ([string]::IsNullOrWhiteSpace($server)) { throw '请选择或输入服务器地址。' }
+        $environmentName = if ($null -ne $environmentBox.SelectedItem) {
+            [string]$environmentBox.SelectedItem.Name
+        } else {
+            ([Uri]$server).Host
+        }
         & $startBridge
         $state.LoginGeneration++
-        & $sendCommand @{command='login';generation=$state.LoginGeneration;account=$account;password=$password;server=$server;verify_tls=$false}
+        & $sendCommand @{
+            command='login';generation=$state.LoginGeneration;account=$account;password=$password
+            server=$server;environment=$environmentName;save_profile=$true;verify_tls=$false
+        }
         $heartbeatLabel.Text = '心跳状态：等待心跳'
         $heartbeatLabel.ForeColor = [Drawing.Color]::FromArgb(92,102,110)
         & $setLoginLifecycle 'connecting' '正在连接 APP PUC 服务。'
@@ -904,25 +767,13 @@
     $startBatch = {
         if (-not $state.LoginOnline) { throw 'APP 当前不在线，无法批量建群。' }
         if ($state.BatchRunning) { throw '批量建群正在执行，请等待完成。' }
-        $members = @()
-        foreach ($row in @($memberGrid.Rows)) {
-            if ($row.IsNewRow) { continue }
-            $memberAccount = ([string]$row.Cells['account'].Value).Trim()
-            $appPucId = ([string]$row.Cells['app_puc_id'].Value).Trim()
-            if ([string]::IsNullOrWhiteSpace($memberAccount) -and [string]::IsNullOrWhiteSpace($appPucId)) { continue }
-            if ([string]::IsNullOrWhiteSpace($memberAccount) -or [string]::IsNullOrWhiteSpace($appPucId)) {
-                throw '每个成员都必须填写账号和 APP PUC ID。'
-            }
-            $members += [ordered]@{account=$memberAccount;app_puc_id=$appPucId}
-        }
-        if ($members.Count -eq 0) { throw '请至少添加一个完整的群成员。' }
         $state.BatchGeneration++
         $resultGrid.Rows.Clear()
         & $setBatchRunning $true '正在提交批量建群任务...'
         try {
             & $sendCommand ([ordered]@{
                 command='batch_create_groups';generation=$state.BatchGeneration
-                members=@($members);group_count=[int]$groupCountInput.Value
+                group_count=[int]$groupCountInput.Value;member_count=[int]$memberCountInput.Value
             })
         } catch { & $setBatchRunning $false $_.Exception.Message; throw }
     }.GetNewClosure()
@@ -970,18 +821,6 @@
             [Windows.Forms.MessageBox]::Show($Context.Form,$_.Exception.Message,'APP 登录','OK','Warning') | Out-Null
         }
     }.GetNewClosure()))
-    $addMemberButton.Add_Click(({
-        try { & $state.ShowMemberPickerAction } catch {
-            & $reportSearchError $_.Exception.Message
-            [Windows.Forms.MessageBox]::Show($Context.Form,$_.Exception.Message,'添加成员','OK','Warning') | Out-Null
-        }
-    }.GetNewClosure()))
-    $removeMemberButton.Add_Click(({
-        foreach ($row in @($memberGrid.SelectedRows)) {
-            if (-not $row.IsNewRow) { $memberGrid.Rows.Remove($row) }
-        }
-        if ($memberGrid.Rows.Count -eq 0) { [void]$memberGrid.Rows.Add() }
-    }.GetNewClosure()))
     $batchButton.Add_Click(({
         try { & $state.StartBatchAction } catch {
             $batchProgressLabel.Text = $_.Exception.Message
@@ -1007,11 +846,9 @@
             OnlineStatus=$onlineLabel
             HeartbeatStatus=$heartbeatLabel
             Business=$businessBox
-            AddMember=$addMemberButton
-            MemberGrid=$memberGrid
+            GroupCount=$groupCountInput
+            MemberCount=$memberCountInput
+            Result=$resultGrid
         }
-        AddMembers=$addMembers
-        ResolveConfigRoot=$resolveConfigRoot
-        ReportSearchError=$reportSearchError
     }
 }

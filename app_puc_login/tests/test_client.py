@@ -111,6 +111,8 @@ def test_ordinary_message_is_forwarded_with_secrets_redacted():
 
     event = next(event for event in events if event.event_type is EventType.MESSAGE)
     assert event.payload == {"cmd_name": "notice", "token": "***"}
+    assert event.message == ""
+    assert not any("protocol-receive" in item.message for item in events)
     client.stop()
 
 

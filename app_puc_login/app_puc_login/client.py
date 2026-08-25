@@ -277,9 +277,9 @@ class PucLoginClient:
             except json.JSONDecodeError:
                 body = body_text
             if isinstance(body, dict):
-                self._emit_protocol("receive", body)
                 if self._resolve_pending(body):
                     continue
+                self._emit(EventType.MESSAGE, LoginPhase.ONLINE, payload=body)
             else:
                 self._emit(EventType.MESSAGE, LoginPhase.ONLINE, payload=body)
 

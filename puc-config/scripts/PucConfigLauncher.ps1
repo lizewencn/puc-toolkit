@@ -1572,8 +1572,8 @@ function New-InputControl($Field, [int]$Index, [int]$X, [int]$Y, [int]$Width) {
             $input.DisplayMember = 'Label'
             foreach ($option in $Field.Options) { $input.Items.Add($option) | Out-Null }
             $selected = 0
-            for ($index = 0; $index -lt $input.Items.Count; $index++) {
-                if ([string]$input.Items[$index].Value -eq [string]$Field.Default) { $selected = $index; break }
+            for ($optionIndex = 0; $optionIndex -lt $input.Items.Count; $optionIndex++) {
+                if ([string]$input.Items[$optionIndex].Value -eq [string]$Field.Default) { $selected = $optionIndex; break }
             }
             $input.SelectedIndex = $selected
             $input.BackColor = [Drawing.Color]::White
@@ -2552,6 +2552,26 @@ if ($UiSelfTest) {
         $dispatcherControl = $script:FieldControls['dispatcherAccount'].Input
         $dispatcherStatus = $script:FieldControls['dispatcherAccount'].SearchStatus
         if ($typeControl.Items.Count -ne 3 -or (@($typeControl.Items | ForEach-Object Label) -join ',') -ne '人员,车,应急车') { throw '人员类型下拉选项渲染不正确。' }
+        foreach ($personnelKey in @('personnel-exact','personnel-prefix')) {
+            $operationBox.SelectedItem = @($script:Operations | Where-Object Key -eq $personnelKey)[0]
+            Rebuild-Inputs
+            $entries = @($script:FieldControls.Values)
+            foreach ($entry in $entries) {
+                if ($entry.Label.Parent -ne $inputPanel -or $entry.Input.Parent -ne $inputPanel -or $entry.Label.Width -le 0 -or $entry.Label.Height -le 0 -or $entry.Input.Width -le 0 -or $entry.Input.Height -le 0 -or -not $inputPanel.ClientRectangle.Contains($entry.Label.Bounds) -or -not $inputPanel.ClientRectangle.Contains($entry.Input.Bounds)) { throw "通讯录人员表单字段不可见或超出容器：$personnelKey/$([string]$entry.Label.Text)" }
+            }
+            for ($leftIndex = 0; $leftIndex -lt $entries.Count; $leftIndex++) {
+                for ($rightIndex = $leftIndex + 1; $rightIndex -lt $entries.Count; $rightIndex++) {
+                    if ($entries[$leftIndex].Input.Bounds.IntersectsWith($entries[$rightIndex].Input.Bounds)) { throw "通讯录人员表单输入控件发生重叠：$personnelKey/$([string]$entries[$leftIndex].Label.Text)/$([string]$entries[$rightIndex].Label.Text)" }
+                }
+            }
+            $personnelTypeEntry = $script:FieldControls['numberType']
+            if ([int]$personnelTypeEntry.LayoutIndex % 2 -ne 1 -or $personnelTypeEntry.Input.Left -le ($inputPanel.ClientSize.Width / 2)) { throw "通讯录人员类型字段未位于右列：$personnelKey" }
+        }
+        $operationBox.SelectedItem = @($script:Operations | Where-Object Key -eq 'personnel-exact')[0]
+        Rebuild-Inputs
+        $typeControl = $script:FieldControls['numberType'].Input
+        $dispatcherControl = $script:FieldControls['dispatcherAccount'].Input
+        $dispatcherStatus = $script:FieldControls['dispatcherAccount'].SearchStatus
         if ($dispatcherControl.DropDownStyle -ne [Windows.Forms.ComboBoxStyle]::DropDown -or $dispatcherControl.DisplayMember -ne 'Label' -or $dispatcherControl.ValueMember -ne 'Value') { throw '调度账号搜索单选下拉渲染不正确。' }
         if ($dispatcherStatus -isnot [Windows.Forms.Label] -or $dispatcherControl.Tag -ne $dispatcherStatus) { throw '调度账号搜索状态标签未正确绑定。' }
         if ($script:FieldControls['dispatcherAccount'].Label.Bounds.IntersectsWith($dispatcherStatus.Bounds)) { throw '调度账号搜索状态与字段标题发生重叠。' }
@@ -2653,7 +2673,7 @@ if ($UiSelfTest) {
         if ($resultTabs.Left -ne 24 -or $resultTabs.Right -ne ($configSurface.ClientSize.Width - 24)) { throw '运行信息区域未与配置页容器宽度保持一致。' }
         if ($null -eq $form.Icon -or -not $form.ShowIcon -or -not (Test-Path -LiteralPath $launcherIconPath -PathType Leaf)) { throw '主窗口未加载桌面快捷方式使用的 PUC Toolkit 图标。' }
         if ([PucTaskbarIdentity]::GetProcessIdentity() -ne $script:PucAppUserModelId -or [PucTaskbarIdentity]::GetWindowProperty($form.Handle,5) -ne $script:PucAppUserModelId -or [PucTaskbarIdentity]::GetWindowProperty($form.Handle,3) -ne $taskbarIconResource) { throw '任务栏未绑定 PUC Toolkit 的独立应用标识和图标资源。' }
-        [pscustomobject]@{status='ui-self-test-passed';tabs=$resultTabs.TabPages.Count;summaryFields=$resultFields.Items.Count;detailRows=$resultGrid.Rows.Count;resultHeight=$resultTabs.Height;environmentVersionControl='passed';versionCompatibilityWarning='passed';summaryFullHeight='passed';resultContainerWidth='passed';windowIcon='passed';taskbarIdentity='passed';inputPanelRedraw='passed';responsiveInputColumns='passed';latestStageRows='passed';compactNumericColumns='passed';accountColumnWidth='passed';inlineConfirmation='passed';uploadVisibility='passed';actionBarLayout='passed';createPrefixDefault='empty';createCountDefault=1;personnelTypeDropdown='passed';dispatcherSearchDropdown='passed';dispatcherSearchEvent='passed';dispatcherSearchStatus='passed';updateAccountSearchDropdown='passed';updateAccountSearchSelection='passed';resetAccountSearchDropdown='passed';resetAccountSearchSelection='passed';executionNodeColors='passed';redundantGroupColumn='hidden'} | ConvertTo-Json -Compress
+        [pscustomobject]@{status='ui-self-test-passed';tabs=$resultTabs.TabPages.Count;summaryFields=$resultFields.Items.Count;detailRows=$resultGrid.Rows.Count;resultHeight=$resultTabs.Height;environmentVersionControl='passed';versionCompatibilityWarning='passed';summaryFullHeight='passed';resultContainerWidth='passed';windowIcon='passed';taskbarIdentity='passed';inputPanelRedraw='passed';responsiveInputColumns='passed';latestStageRows='passed';compactNumericColumns='passed';accountColumnWidth='passed';inlineConfirmation='passed';uploadVisibility='passed';actionBarLayout='passed';createPrefixDefault='empty';createCountDefault=1;personnelTypeDropdown='passed';personnelFieldBounds='passed';dispatcherSearchDropdown='passed';dispatcherSearchEvent='passed';dispatcherSearchStatus='passed';updateAccountSearchDropdown='passed';updateAccountSearchSelection='passed';resetAccountSearchDropdown='passed';resetAccountSearchSelection='passed';executionNodeColors='passed';redundantGroupColumn='hidden'} | ConvertTo-Json -Compress
     } finally {
         if ($null -ne $script:AppBusinessController) { try { [void]$script:AppBusinessController.Dispose.Invoke() } catch {} }
         $timer.Stop();$timer.Dispose();$form.Dispose()

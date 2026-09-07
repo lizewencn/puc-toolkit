@@ -97,6 +97,8 @@ function Format-PucResultRawText([string[]]$Outputs, [string]$ExtraText = '') {
 function Get-PucResultLabel([string]$Name) {
     $labels = @{
         account='账号'; accounts='账号'; action='动作'; alias='别名'; alreadyComplete='已完整'; assetDirectory='资源目录'
+        environmentIp='环境 IP'; servicePort='服务端口'; sapAlias='接入点别名'; systemId='所属系统'; systemAlias='系统名称'
+        gatewayType='网关类型'; gatewayLabel='网关名称'; systemUrl='第三方服务地址'; localTcpPort='本地 TCP 端口'; audioFileUrl='录音文件下载地址'
         bytes='文件大小'; changedFields='变更字段'; changes='变更'; code='编码'; command='命令'
         configBytes='配置大小'; configFilePath='配置文件'; configSha256='配置 SHA-256'; dispatchNumber='调度号码'; dispatcherAccount='调度账号'
         count='数量'; currentEnabled='当前启用'; currentFlag='当前值'; currentLicenseType='当前 License 类型'
@@ -123,7 +125,7 @@ function Get-PucStatusText([string]$Value) {
         'already-complete'='无需修改'; 'completed'='已完成'; 'configured'='配置完成'; 'created'='已创建'
         'current'='当前状态'; 'exported'='已导出'; 'failed'='失败'; 'imported'='已导入'; 'partial-failure'='部分失败'
         'planned'='已检查'; 'planned-offline'='本地检查完成'; 'previewed'='预检完成'; 'ready'='待执行'
-        'skipped'='已跳过'; 'unchanged'='无需变更'; 'updated'='已更新'; 'installed'='已安装'; 'no-change'='无需变更'; 'no-match'='查询结果为空'
+        'skipped'='已跳过'; 'unchanged'='无需变更'; 'updated'='已更新'; 'installed'='已安装'; 'no-change'='无需变更'; 'no-match'='查询结果为空'; 'already-exists'='已存在'
         'password-reset'='密码已重置'; 'preview-failed'='预检失败'; 'conflict-skipped'='冲突已跳过'
         'build-complete'='已制作完成'; 'latest'='已是最新版本'; 'staged'='已下载待安装'; 'update-failed'='更新失败'
         'true'='是'; 'false'='否'
@@ -227,6 +229,7 @@ function New-PucResultModel {
     elseif ($ViewState -eq 'Finished') {
         if ($combinedText -match '(?i)(用户已取消|cancelled|canceled)') { $kind='Neutral';$statusText='已取消' }
         elseif ($latestStatus -eq 'no-match') { $kind='Neutral';$statusText='查询结果为空' }
+        elseif ($latestStatus -eq 'already-exists') { $kind='Neutral';$statusText='已存在，无需新增' }
         elseif ($latestStatus -eq 'latest' -and $ExitCode -eq 0) { $kind='Success';$statusText='已是最新版本' }
         elseif ($combinedText -match '(?i)(uncertain|不确定|may require manual reconciliation|No retry was attempted)' -and $ExitCode -ne 0) { $kind='Warning';$statusText='结果不确定' }
         elseif ($latestStatus -match 'partial-failure' -or ($ExitCode -ne 0 -and $combinedText -match '(?i)(after the configuration file was saved|部分成功|已成功)')) { $kind='Warning';$statusText='部分成功' }
@@ -266,6 +269,7 @@ function New-PucResultModel {
 
     $displayFields = @(
         'account','query','message','operationResult','configRoot','targetSource','accountCount','count','itemCount','nodeCount','updateCount','packageCount','packageNames','updatedCount','installedCount','alreadyComplete',
+        'environmentIp','servicePort','sapAlias','systemId','systemAlias','gatewayType','gatewayLabel','systemUrl','localTcpPort','audioFileUrl',
         'succeeded','failed','failedAccount','currentEnabled','currentFlag','currentValue','desiredFlag','desiredValue',
         'writeRequired','verified','taskId','percentage','filePath','bytes','sha256','configFilePath','configBytes',
         'configSha256','licenseFilePath','licenseBytes','licenseSha256','manifestPath','replacementRequired',

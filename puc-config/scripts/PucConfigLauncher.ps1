@@ -57,8 +57,8 @@ function Get-LastJsonObject([string]$Text) {
     return $null
 }
 
-function New-Field([string]$Key, [string]$Label, [string]$Kind, $Default = '', $Options = @(), [string]$Filter = '') {
-    [pscustomobject]@{ Key=$Key; Label=$Label; Kind=$Kind; Default=$Default; Options=@($Options); Filter=$Filter }
+function New-Field([string]$Key, [string]$Label, [string]$Kind, $Default = '', $Options = @(), [string]$Filter = '', [decimal]$Minimum = 0, [decimal]$Maximum = 1000) {
+    [pscustomobject]@{ Key=$Key; Label=$Label; Kind=$Kind; Default=$Default; Options=@($Options); Filter=$Filter; Minimum=$Minimum; Maximum=$Maximum }
 }
 
 $actionOptions = @(
@@ -118,6 +118,7 @@ function Get-PucExecutionNodeDefinitions([string]$Operation, [string]$Action = '
         'license-export' { return @((New-PucExecutionNode '导出 License' @('license-export'))) }
         'license-import' { return @((New-PucExecutionNode '检查 License 文件' @('license-import-plan')),(New-PucExecutionNode 'License 导入预检' @('license-import-preview')),(New-PucExecutionNode '导入 License' @('license-import-live'))) }
         'permission-import' { return @((New-PucExecutionNode '检查权限菜单' @('permission-import-plan')),(New-PucExecutionNode '导入权限菜单' @('permission-import-live'))) }
+        'incident-gateway' { return @((New-PucExecutionNode '警情网关预检' @('incident-gateway-preview')),(New-PucExecutionNode '新增警情网关' @('incident-gateway-live'))) }
         'incident-levels' { return @((New-PucExecutionNode '警情等级预检' @('incident-preview')),(New-PucExecutionNode '配置警情等级' @('incident-live'))) }
         default { return @() }
     }
@@ -191,6 +192,9 @@ $script:Operations = @(
     [pscustomobject]@{Key='permission-import';Label='导入权限菜单';Fields=@(
         (New-Field 'filePath' '权限菜单 JSON' 'File' '' @() 'JSON 文件 (*.json)|*.json'),
         (New-Field 'target' '导入目标' 'Combo' 'WebPUC' $permissionTargetOptions)
+    )},
+    [pscustomobject]@{Key='incident-gateway';Label='新增警情网关';Fields=@(
+        (New-Field 'servicePort' '服务端口' 'Number' 17060 @() '' 1 65535)
     )},
     [pscustomobject]@{Key='incident-levels';Label='配置警情等级';Fields=@()},
     [pscustomobject]@{Key='android-upgrade';Label='制作 Android 升级包';Fields=@(
@@ -333,7 +337,7 @@ function Get-PucSkillUpdateDisplayText {
 }
 
 if ($SelfTest) {
-    if ($script:Operations.Count -ne 18) { throw '操作目录数量不正确。' }
+    if ($script:Operations.Count -ne 19) { throw '操作目录数量不正确。' }
     if (-not $script:ShowEnvironmentPasswordsByDefault) { throw '新增环境的显示密码选项必须默认勾选。' }
     if ($script:DefaultNewAccountPassword -ne '888') { throw '新账号及重置默认密码必须默认为 888。' }
     Assert-NewEnvironmentPasswords -AdminPassword 'admin-test-password' -NewAccountPassword $script:DefaultNewAccountPassword
@@ -342,13 +346,13 @@ if ($SelfTest) {
     if (-not $emptyNewAccountPasswordRejected) { throw '新增环境未拒绝空的新账号及重置默认密码。' }
     $keys = @($script:Operations.Key | Sort-Object -Unique)
     if ($keys.Count -ne $script:Operations.Count) { throw '操作目录中存在重复键。' }
-    $expectedKeys = @('create','reset','reset-query','reset-file','complete','update','personnel-prefix','personnel-exact','role','policy','force-login','config-export','config-import','license-export','license-import','permission-import','incident-levels','android-upgrade')
+    $expectedKeys = @('create','reset','reset-query','reset-file','complete','update','personnel-prefix','personnel-exact','role','policy','force-login','config-export','config-import','license-export','license-import','permission-import','incident-gateway','incident-levels','android-upgrade')
     foreach ($key in $expectedKeys) { if ($key -notin $keys) { throw "操作目录缺少 $key。" } }
     foreach ($key in $expectedKeys) {
         $action = if ($key -in @('policy','force-login')) {'Status'} else {''}
         if (@(Get-PucExecutionNodeDefinitions -Operation $key -Action $action).Count -lt 1) { throw "操作 $key 未定义执行节点。" }
     }
-    if (@(Get-PucExecutionNodeDefinitions -Operation 'update').Count -ne 3 -or @(Get-PucExecutionNodeDefinitions -Operation 'policy' -Action 'Enable').Count -ne 2) { throw '多阶段操作的执行节点定义不正确。' }
+    if (@(Get-PucExecutionNodeDefinitions -Operation 'update').Count -ne 3 -or @(Get-PucExecutionNodeDefinitions -Operation 'policy' -Action 'Enable').Count -ne 2 -or @(Get-PucExecutionNodeDefinitions -Operation 'incident-gateway').Count -ne 2) { throw '多阶段操作的执行节点定义不正确。' }
     $upgradeOperation = $script:Operations | Where-Object Key -eq 'android-upgrade'
     $upgradeKinds = @{}
     foreach ($field in @($upgradeOperation.Fields)) { $upgradeKinds[[string]$field.Key] = [string]$field.Kind }
@@ -362,6 +366,9 @@ if ($SelfTest) {
     $createCountField = @($createOperation.Fields | Where-Object Key -eq 'count')[0]
     if (-not [string]::IsNullOrEmpty([string]$createPrefixField.Default)) { throw '新增调度账号的账号前缀不得设置默认值。' }
     if ([int]$createCountField.Default -ne 1) { throw '新增调度账号的创建数量必须默认为 1。' }
+    $incidentGatewayOperation = @($script:Operations | Where-Object Key -eq 'incident-gateway')[0]
+    $servicePortField = @($incidentGatewayOperation.Fields | Where-Object Key -eq 'servicePort')[0]
+    if ($servicePortField.Kind -ne 'Number' -or [int]$servicePortField.Default -ne 17060 -or [int]$servicePortField.Minimum -ne 1 -or [int]$servicePortField.Maximum -ne 65535) { throw '新增警情网关服务端口字段定义不正确。' }
     foreach ($personnelOperation in @($script:Operations | Where-Object Key -in @('personnel-prefix','personnel-exact'))) {
         $typeField = @($personnelOperation.Fields | Where-Object Key -eq 'numberType')
         $dispatcherField = @($personnelOperation.Fields | Where-Object Key -eq 'dispatcherAccount')
@@ -377,7 +384,7 @@ if ($SelfTest) {
     $fullUrlRejected = $false
     try { [void](ConvertTo-PucBaseUrlFromIp 'https://10.161.30.163:16890') } catch { $fullUrlRejected = $true }
     if (-not $fullUrlRejected) { throw '新增环境不得接受包含协议或端口的服务地址。' }
-    $workflowScripts = @('Initialize-PucConfig.ps1','Repair-PucEnvironmentNames.ps1','Get-PucEnvironmentVersion.ps1','Invoke-PucAccounts.ps1','Invoke-PucAccountPasswordReset.ps1','Invoke-PucAccountPasswordResetBatch.ps1','Invoke-PucAccountCompletion.ps1','Invoke-PucAccountUpdate.ps1','Invoke-PucPersonnel.ps1','Invoke-PucRole.ps1','Invoke-PucSkillUpdate.ps1','Invoke-PucDispatcherSearch.ps1','Invoke-PucFirstLoginPasswordCheck.ps1','Invoke-PucForceLogin.ps1','Invoke-PucConfigTransfer.ps1','Invoke-PucLicense.ps1','Invoke-PucPermissionMenuImport.ps1','Invoke-PucIncidentAlarmLevels.ps1','Invoke-AndroidUpgradePackage.ps1','PucResultRenderer.psm1')
+    $workflowScripts = @('Initialize-PucConfig.ps1','Repair-PucEnvironmentNames.ps1','Get-PucEnvironmentVersion.ps1','Invoke-PucAccounts.ps1','Invoke-PucAccountPasswordReset.ps1','Invoke-PucAccountPasswordResetBatch.ps1','Invoke-PucAccountCompletion.ps1','Invoke-PucAccountUpdate.ps1','Invoke-PucPersonnel.ps1','Invoke-PucRole.ps1','Invoke-PucSkillUpdate.ps1','Invoke-PucDispatcherSearch.ps1','Invoke-PucFirstLoginPasswordCheck.ps1','Invoke-PucForceLogin.ps1','Invoke-PucConfigTransfer.ps1','Invoke-PucLicense.ps1','Invoke-PucPermissionMenuImport.ps1','Invoke-PucIncidentGateway.ps1','Invoke-PucIncidentAlarmLevels.ps1','Invoke-AndroidUpgradePackage.ps1','PucResultRenderer.psm1')
     foreach ($workflowScript in $workflowScripts) {
         if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $workflowScript) -PathType Leaf)) { throw "工作流脚本不存在：$workflowScript" }
     }
@@ -397,6 +404,8 @@ if ($SelfTest) {
     if ($partialModel.Kind -ne 'Warning' -or @($partialModel.Rows).Count -ne 2) { throw '部分失败结果表格验证失败。' }
     $noMatchModel = New-PucResultModel -Outputs @('{"status":"no-match","query":"missing","accountCount":0,"accounts":[],"message":"未查询到匹配的调度账号，请调整查询关键字后重试。"}') -OperationLabel '批量重置密码（按查询）' -Environment '10.161.30.163' -Stage 'batch-reset-preview' -StartedAt $resultStartedAt -ViewState Finished -ExitCode 0
     if ($noMatchModel.Kind -ne 'Neutral' -or $noMatchModel.StatusText -ne '查询结果为空' -or @($noMatchModel.Fields | Where-Object { $_.Name -eq 'message' -and $_.Value -match '未查询到匹配的调度账号' }).Count -ne 1) { throw '空查询结果友好提示渲染失败。' }
+    $existingGatewayModel = New-PucResultModel -Outputs @('{"status":"already-exists","environment":"10.161.30.163","sapAlias":"3rdwx","message":"服务接入点别名 3rdwx 已经存在，已终止新增。","writesUsed":0}') -OperationLabel '新增警情网关' -Environment '10.161.30.163' -Stage 'incident-gateway-preview' -StartedAt $resultStartedAt -ViewState Finished -ExitCode 0
+    if ($existingGatewayModel.Kind -ne 'Neutral' -or $existingGatewayModel.StatusText -ne '已存在，无需新增' -or @($existingGatewayModel.Fields | Where-Object { $_.Name -eq 'sapAlias' -and $_.Value -eq '3rdwx' }).Count -ne 1) { throw '警情网关已存在结果渲染失败。' }
     $stageModel = New-PucResultModel -Outputs @('{"status":"previewed","accounts":[{"account":"mhw1"},{"account":"mhw2"}]}','{"status":"password-reset","results":[{"account":"mhw1","status":"password-reset"},{"account":"mhw2","status":"password-reset"}]}') -OperationLabel '批量重置密码' -Environment '10.161.30.163' -Stage 'batch-reset-live' -StartedAt $resultStartedAt -ViewState Finished -ExitCode 0
     if (@($stageModel.Rows).Count -ne 2 -or @($stageModel.Rows | Where-Object group -eq '账号').Count -ne 0) { throw '执行结果不得混合预检与最终阶段数据。' }
     $nodeModel = New-PucResultModel -Outputs @('{"status":"previewed","results":[{"alias":"test","status":"planned"}]}') -OperationLabel '新增人员' -Environment '10.161.30.163' -ExecutionNodes @([pscustomobject]@{Label='人员新增预检';Status='completed'},[pscustomobject]@{Label='新增人员';Status='running'}) -StartedAt $resultStartedAt -ViewState Progress
@@ -1381,8 +1390,8 @@ function Get-PucStageDisplayLabel([string]$Stage) {
         'force-preview'='重复登录策略预检';'force-live'='更新重复登录策略';'config-export'='导出配置和 License'
         'config-import-plan'='检查配置文件';'config-import-live'='导入配置';'license-export'='导出 License'
         'license-import-plan'='检查 License 文件';'license-import-preview'='License 导入预检';'license-import-live'='导入 License'
-        'permission-import-plan'='检查权限菜单';'permission-import-live'='导入权限菜单';'incident-preview'='警情等级预检'
-        'incident-live'='配置警情等级'
+        'permission-import-plan'='检查权限菜单';'permission-import-live'='导入权限菜单';'incident-gateway-preview'='警情网关预检'
+        'incident-gateway-live'='新增警情网关';'incident-preview'='警情等级预检';'incident-live'='配置警情等级'
     }
     if ($labels.ContainsKey($Stage)) { return $labels[$Stage] }
     return $Stage
@@ -1561,8 +1570,8 @@ function New-InputControl($Field, [int]$Index, [int]$X, [int]$Y, [int]$Width) {
         }
         'Number' {
             $input = New-Object Windows.Forms.NumericUpDown
-            $input.Minimum = 0
-            $input.Maximum = 1000
+            $input.Minimum = [decimal]$Field.Minimum
+            $input.Maximum = [decimal]$Field.Maximum
             $input.Value = [decimal]$Field.Default
             $input.BackColor = [Drawing.Color]::White
             $input.Location = New-Object Drawing.Point($X,$controlY)
@@ -2124,6 +2133,12 @@ function Start-RequestedWorkflow {
             $state.Data.FilePath=$path;$state.Data.Target=$target
             Start-Stage 'permission-import-plan' @('Invoke-PucPermissionMenuImport.ps1','-Environment',$environment,'-FilePath',$path,'-Target',$target,'-PlanOnly')
         }
+        'incident-gateway' {
+            $servicePort=[int](Get-FieldValue 'servicePort')
+            if($servicePort -lt 1 -or $servicePort -gt 65535){throw '服务端口必须在 1 到 65535 之间。'}
+            $state.Data.ServicePort=$servicePort
+            Start-Stage 'incident-gateway-preview' @('Invoke-PucIncidentGateway.ps1','-Environment',$environment,'-ServicePort',[string]$servicePort,'-DryRun')
+        }
         'incident-levels' { Start-Stage 'incident-preview' @('Invoke-PucIncidentAlarmLevels.ps1','-Environment',$environment,'-DryRun') }
         default { throw '不支持的操作。' }
     }
@@ -2306,6 +2321,14 @@ $timer.Add_Tick({
             }
             'permission-import-plan' {
                 Request-PreviewConfirmation -Prompt '请核对环境、文件和导入目标，确认是否替换权限菜单。' -NextStage 'permission-import-live' -Arguments @('Invoke-PucPermissionMenuImport.ps1','-Environment',$script:ExecutionState.Environment,'-FilePath',$script:ExecutionState.Data.FilePath,'-Target',$script:ExecutionState.Data.Target,'-ConfirmImport') -CancelText '用户已取消权限菜单导入。';return
+            }
+            'incident-gateway-preview' {
+                if([string]$json.status -eq 'already-exists'){
+                    Set-PucPendingExecutionNodesSkipped $script:ExecutionState;Finish-Execution 0
+                    $statusLabel.Text='警情网关已存在';$statusLabel.ForeColor=[Drawing.Color]::FromArgb(92,102,110);return
+                }
+                $hash=[string]$json.snapshotHash;if($hash -notmatch '^[A-Fa-f0-9]{64}$'){throw '预检未返回有效的警情网关快照哈希。'}
+                Start-Stage 'incident-gateway-live' @('Invoke-PucIncidentGateway.ps1','-Environment',$script:ExecutionState.Environment,'-ServicePort',[string]$script:ExecutionState.Data.ServicePort,'-Live','-ConfirmLive','-ExpectedSnapshotHash',$hash);return
             }
             'incident-preview' {
                 $hash=[string]$json.PreviewHash;if($hash -notmatch '^[A-Fa-f0-9]{64}$'){throw '预检未返回有效的警情等级预览哈希。'}
@@ -2521,6 +2544,12 @@ if ($UiSelfTest) {
         Rebuild-Inputs
         if (-not [string]::IsNullOrEmpty([string]$script:FieldControls['prefix'].Input.Text)) { throw '新增调度账号 GUI 不得预填账号前缀。' }
         if ([int]$script:FieldControls['count'].Input.Value -ne 1) { throw '新增调度账号 GUI 创建数量必须默认为 1。' }
+        $operationBox.SelectedItem = @($script:Operations | Where-Object Key -eq 'incident-gateway')[0]
+        Rebuild-Inputs
+        $servicePortInput = $script:FieldControls['servicePort'].Input
+        if ($servicePortInput -isnot [Windows.Forms.NumericUpDown] -or [int]$servicePortInput.Value -ne 17060 -or [int]$servicePortInput.Minimum -ne 1 -or [int]$servicePortInput.Maximum -ne 65535) { throw '新增警情网关服务端口控件渲染不正确。' }
+        $operationBox.SelectedItem = @($script:Operations | Where-Object Key -eq 'create')[0]
+        Rebuild-Inputs
         if (-not [bool]$inputPanelDoubleBufferedProperty.GetValue($inputPanel,$null)) { throw '操作参数面板未启用双缓冲重绘。' }
         $prefixInput = $script:FieldControls['prefix'].Input
         $countInput = $script:FieldControls['count'].Input

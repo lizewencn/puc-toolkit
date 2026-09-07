@@ -1,6 +1,6 @@
 ---
 name: puc-config
-description: Configure a named PUC environment through its configuration API, including reusable captcha login, saved-token validation, account creation and updates, dispatcher password reset, batch personnel creation, configuration and License transfer, permission menus, login-policy switches, and the desktop shortcut.
+description: Configure a named PUC environment through its configuration API, including reusable captcha login, account and personnel operations, incident gateway and alarm-level setup, configuration and License transfer, permission menus, login-policy switches, and the desktop shortcut.
 ---
 
 # PUC Config
@@ -67,6 +67,7 @@ Use the complete lowercase host from `baseUrl` as every environment's `name` key
 - Existing dispatcher account updates: read `references/update-account.md` and `references/login.md`.
 - Batch address-book personnel: read `references/batch-personnel.md` and `references/login.md`.
 - Add a role with all interface, menu, and root-organization data permissions: read `references/add-role.md` and `references/login.md`.
+- Add the fixed `3rdwx` Wuxi police-incident service gateway: read `references/add-incident-gateway.md` and `references/login.md`.
 - Fixed police incident alarm-level configuration: read `references/incident-alarm-levels.md` and `references/login.md`.
 - Configuration import or export: read `references/config-import-export.md` and `references/login.md`.
 - Standalone License import or export: read `references/license.md` and `references/login.md`.

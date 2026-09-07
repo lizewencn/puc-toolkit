@@ -416,7 +416,7 @@ if ($SelfTest) {
     $createModel = New-PucResultModel -Outputs @('{"status":"created","count":2,"succeeded":2,"failed":0,"results":[{"sequence":1,"account":"mhw163001","alias":"mhw163001_alias","status":"created"},{"sequence":2,"account":"mhw163002","alias":"mhw163002_alias","status":"created"}]}','{"status":"post-create-login-policy","environment":"10.161.30.163"}') -OperationLabel '新增调度账号' -Environment '10.161.30.163' -Stage 'create-live' -StartedAt $resultStartedAt -ViewState Finished -ExitCode 0
     if (@($createModel.Rows).Count -ne 2 -or [string]$createModel.Rows[0].account -ne 'mhw163001') { throw '新增账号执行结果表格验证失败。' }
     $errorModel = New-PucResultModel -Outputs @('Request failed; authorization=SECRET-VALUE. No retry was attempted.') -OperationLabel '更新账号' -Environment '10.161.30.163' -Stage 'update-live' -StartedAt $resultStartedAt -ViewState Finished -ExitCode 1
-    if ($errorModel.Kind -ne 'Warning' -or $errorModel.RawText -match 'SECRET-VALUE') { throw '结果不确定状态或详细输出脱敏验证失败。' }
+    if ($errorModel.Kind -ne 'Warning' -or $errorModel.RawText -match 'SECRET-VALUE') { throw '结果不确定状态或运行日志脱敏验证失败。' }
     $testForm = New-Object Windows.Forms.Form
     $testButton = New-Object Windows.Forms.Button
     try {
@@ -1036,7 +1036,7 @@ function Update-DispatcherLookup {
     } catch {
         Set-PucDispatcherSearchStatus -Control $lookup.Control -State Failed
         Show-PucStandaloneResult -OperationLabel '搜索调度账号' -Environment ([string]$lookup.RequestedEnvironment) -Stage '调度账号模糊搜索' -Outputs @($_.Exception.Message) -StartedAt ([datetime]$lookup.StartedAt) -ViewState Finished -ExitCode 1
-        $statusLabel.Text = '调度账号搜索失败，请查看详细输出。'
+        $statusLabel.Text = '调度账号搜索失败，请查看右侧运行日志。'
         $statusLabel.ForeColor = [Drawing.Color]::FromArgb(184,70,45)
     }
 }
@@ -1072,11 +1072,6 @@ $resultTab = New-Object Windows.Forms.TabPage
 $resultTab.Text = '执行结果'
 $resultTab.BackColor = [Drawing.Color]::White
 $resultTabs.TabPages.Add($resultTab)
-
-$detailsTab = New-Object Windows.Forms.TabPage
-$detailsTab.Text = '详细输出'
-$detailsTab.BackColor = [Drawing.Color]::White
-$resultTabs.TabPages.Add($detailsTab)
 
 $resultStatusPanel = New-Object Windows.Forms.Panel
 $resultStatusPanel.Dock = [Windows.Forms.DockStyle]::Fill
@@ -1166,17 +1161,6 @@ $copyAllResultsMenuItem.Add_Click({
     [Windows.Forms.Clipboard]::SetText(($lines -join [Environment]::NewLine))
 })
 $resultTab.Controls.Add($resultGrid)
-
-$detailsBox = New-Object Windows.Forms.RichTextBox
-$detailsBox.Dock = [Windows.Forms.DockStyle]::Fill
-$detailsBox.ReadOnly = $true
-$detailsBox.BorderStyle = [Windows.Forms.BorderStyle]::None
-$detailsBox.BackColor = [Drawing.Color]::FromArgb(250,251,252)
-$detailsBox.ForeColor = [Drawing.Color]::FromArgb(38,45,50)
-$detailsBox.Font = New-Object Drawing.Font('Consolas',9)
-$detailsBox.WordWrap = $false
-$detailsBox.DetectUrls = $false
-$detailsTab.Controls.Add($detailsBox)
 
 $tabEnabled = @{'puc-config'=$true;'app-business'=$true}
 $tabsConfigPath = Join-Path $PSScriptRoot 'tabs\tabs.json'
@@ -1509,9 +1493,6 @@ function Show-PucResultModel($Model) {
         $resultTab.PerformLayout()
     }
 
-    $detailsBox.Text = if ([string]::IsNullOrWhiteSpace([string]$Model.RawText)) { '暂无详细输出。' } else { [string]$Model.RawText }
-    $detailsBox.SelectionStart = 0
-    $detailsBox.ScrollToCaret()
     $resultTabs.SelectedTab = if ($rows.Count -gt 0 -and [string]$Model.StatusText -eq '等待确认') { $resultTab } else { $summaryTab }
 }
 
@@ -2646,14 +2627,14 @@ if ($UiSelfTest) {
 
         $uiModel = New-PucResultModel -Outputs @('{"status":"partial-failure","environment":"10.161.30.163","succeeded":1,"failed":1,"results":[{"account":"mhw19001","status":"password-reset","stage1Result":0,"stage2Result":0,"writesUsed":2,"finalPasswordStatus":"configured"},{"account":"mhw19002","status":"failed","stage1Result":0,"stage2Result":1,"writesUsed":1,"reason":"request failed"}],"token":"UI-SECRET"}') -OperationLabel '批量重置密码' -Environment '10.161.30.163' -Stage '批量重置密码' -StartedAt ([datetime]::Now.AddSeconds(-3)) -ViewState Finished -ExitCode 1
         Show-PucResultModel $uiModel
-        if ($resultTabs.TabPages.Count -ne 3) { throw '结果标签页数量不正确。' }
+        if ($resultTabs.TabPages.Count -ne 2) { throw '结果标签页数量不正确。' }
         if ($versionLabel.Parent -ne $selectionPanel -or $versionLabel.Text -notmatch '^版本：') { throw '环境版本显示控件不正确。' }
         if ($versionCompatibilityWarningLabel.Parent -ne $selectionPanel -or $versionCompatibilityWarningLabel.Text -ne '不同版本号上表现可能存在差异' -or $versionCompatibilityWarningLabel.ForeColor.R -lt 150) { throw '版本兼容性提示控件不正确。' }
         if ($addressLabel.Bounds.IntersectsWith($versionLabel.Bounds) -or $versionLabel.Left -ne $environmentBox.Left -or $versionLabel.Top -le $addressLabel.Top -or $versionCompatibilityWarningLabel.Anchor -ne 'Top,Left' -or $versionCompatibilityWarningLabel.TextAlign -ne [Drawing.ContentAlignment]::TopLeft) { throw '版本信息行未显示在环境栏下方左侧。' }
         if ($versionLabel.Bounds.IntersectsWith($versionCompatibilityWarningLabel.Bounds)) { throw '版本号与兼容性提示发生重叠。' }
         if ([Windows.Forms.TextRenderer]::MeasureText($versionCompatibilityWarningLabel.Text,$versionCompatibilityWarningLabel.Font).Width -gt $versionCompatibilityWarningLabel.ClientSize.Width) { throw '版本兼容性提示文本显示不完整。' }
         if ($selectionPanel.Bottom -ne $inputPanel.Top) { throw '环境信息区与操作参数区布局不连续。' }
-        if ($summaryTab.Text -ne '执行摘要' -or $resultTab.Text -ne '执行结果' -or $detailsTab.Text -ne '详细输出') { throw '结果标签页中文标题不正确。' }
+        if ($summaryTab.Text -ne '执行摘要' -or $resultTab.Text -ne '执行结果') { throw '结果标签页中文标题不正确。' }
         if ($resultGrid.Parent -ne $resultTab -or $resultLayout.RowCount -ne 2) { throw '摘要和结果未使用独立标签页布局。' }
         if ($resultFields.Items.Count -lt 3) { throw '结果摘要字段未渲染。' }
         if ($resultGrid.Rows.Count -ne 2) { throw '批量结果表格未渲染完整。' }
@@ -2666,7 +2647,6 @@ if ($UiSelfTest) {
             if (-not $resultGrid.Columns.Contains($compactName) -or $resultGrid.Columns[$compactName].Width -gt 60) { throw "紧凑数值列宽度不正确：$compactName" }
         }
         if ($resultGrid.Columns['stage1Result'].HeaderText -ne '阶段 1 结果' -or $resultGrid.Columns['writesUsed'].HeaderText -ne '写入次数') { throw '结果列中文标题不正确。' }
-        if ($detailsBox.Text -match 'UI-SECRET') { throw '详细输出包含未脱敏字段。' }
         & $writeBusinessLogAction '自检' 'global-log-visible token=GLOBAL-LOG-SECRET'
         if ($businessLogBox.Text -notmatch 'global-log-visible' -or $businessLogBox.Text -match 'GLOBAL-LOG-SECRET') { throw '全局日志内容未显示或未正确脱敏。' }
         if ($resultTabs.Height -lt 300 -or $resultLayout.RowStyles[1].SizeType -ne [Windows.Forms.SizeType]::Percent) { throw '执行摘要区域未使用完整可用高度。' }

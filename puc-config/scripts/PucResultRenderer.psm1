@@ -199,7 +199,7 @@ function Get-PucResultErrorSummary([string]$RawText, $LatestRecord) {
         if ($candidate.Length -gt 500) { return $candidate.Substring(0,497) + '...' }
         return $candidate
     }
-    return '执行未成功，详细信息见“详细输出”。'
+    return '执行未成功，详细信息见右侧“运行日志”。'
 }
 
 function New-PucResultModel {

@@ -1692,6 +1692,27 @@ function Update-PucInputFieldLayout {
     }
 }
 
+function Update-PucPersonnelDispatcherAvailability {
+    if ($null -eq $operationBox.SelectedItem -or [string]$operationBox.SelectedItem.Key -ne 'personnel-prefix') { return }
+    if (-not $script:FieldControls.ContainsKey('count') -or -not $script:FieldControls.ContainsKey('dispatcherAccount')) { return }
+    $countInput = $script:FieldControls['count'].Input
+    $dispatcherEntry = $script:FieldControls['dispatcherAccount']
+    $dispatcherInput = $dispatcherEntry.Input
+    $canBind = [int]$countInput.Value -eq 1
+    if (-not $canBind) {
+        if ($null -ne $script:DispatcherLookup -and $script:DispatcherLookup.Control -eq $dispatcherInput) {
+            $script:DispatcherLookup.Control = $null
+            $script:DispatcherLookup.Query = ''
+        }
+        $dispatcherInput.Items.Clear()
+        $dispatcherInput.SelectedIndex = -1
+        $dispatcherInput.Text = ''
+        Set-PucDispatcherSearchStatus -Control $dispatcherInput -State Idle
+    }
+    $dispatcherInput.Enabled = $canBind
+    foreach ($control in @($dispatcherEntry.AdditionalControls)) { $control.Enabled = $canBind }
+}
+
 $script:InputPanelResizeInvalidationCount = 0
 $inputPanel.Add_SizeChanged({
     param($sender,$eventArgs)
@@ -1731,6 +1752,10 @@ $script:SkillUpdateStartedAt = $null
     Resize-FormForFields (42 + ($rows * $rowHeight))
     Update-PucInputFieldLayout
     $inputPanel.ResumeLayout($true)
+    if ([string]$operationBox.SelectedItem.Key -eq 'personnel-prefix') {
+        $script:FieldControls['count'].Input.Add_ValueChanged({ Update-PucPersonnelDispatcherAvailability })
+        Update-PucPersonnelDispatcherAvailability
+    }
 }
 
 function Set-ControlsEnabled([bool]$Enabled) {
@@ -1746,6 +1771,7 @@ function Set-ControlsEnabled([bool]$Enabled) {
         $entry.Input.Enabled = $Enabled
         foreach ($control in $entry.AdditionalControls) { $control.Enabled = $Enabled }
     }
+    if ($Enabled) { Update-PucPersonnelDispatcherAvailability }
 }
 
 function Set-ConfirmationMode([bool]$Enabled) {
@@ -2567,11 +2593,27 @@ if ($UiSelfTest) {
             $personnelTypeEntry = $script:FieldControls['numberType']
             if ([int]$personnelTypeEntry.LayoutIndex % 2 -ne 1 -or $personnelTypeEntry.Input.Left -le ($inputPanel.ClientSize.Width / 2)) { throw "通讯录人员类型字段未位于右列：$personnelKey" }
         }
+        $operationBox.SelectedItem = @($script:Operations | Where-Object Key -eq 'personnel-prefix')[0]
+        Rebuild-Inputs
+        $batchCountControl = $script:FieldControls['count'].Input
+        $batchDispatcherControl = $script:FieldControls['dispatcherAccount'].Input
+        $batchDispatcherStatus = $script:FieldControls['dispatcherAccount'].SearchStatus
+        if (-not $batchDispatcherControl.Enabled -or [int]$batchCountControl.Value -ne 1) { throw '单条批量人员创建时关联调度账号未启用。' }
+        [void]$batchDispatcherControl.Items.Add([pscustomobject]@{Label='mhw10001_alias(mhw10001)';Value='mhw10001'})
+        $batchDispatcherControl.SelectedIndex = 0
+        $batchDispatcherControl.Text = 'mhw10001_alias(mhw10001)'
+        Set-PucDispatcherSearchStatus -Control $batchDispatcherControl -State Selected
+        $script:DispatcherLookup = [pscustomobject]@{Control=$batchDispatcherControl;Query='mhw10001';RequestedQuery='';RequestedEnvironment='';DueAt=[datetime]::Now;StartedAt=[datetime]::Now;Handle=$null}
+        $batchCountControl.Value = 2
+        if ($batchDispatcherControl.Enabled -or $batchDispatcherControl.Items.Count -ne 0 -or $batchDispatcherControl.SelectedIndex -ne -1 -or -not [string]::IsNullOrEmpty($batchDispatcherControl.Text) -or -not [string]::IsNullOrEmpty($batchDispatcherStatus.Text) -or $null -ne $script:DispatcherLookup.Control) { throw '多条批量人员创建时关联调度账号未清空并禁用。' }
+        $batchCountControl.Value = 1
+        if (-not $batchDispatcherControl.Enabled) { throw '批量人员创建数量恢复为 1 时关联调度账号未重新启用。' }
         $operationBox.SelectedItem = @($script:Operations | Where-Object Key -eq 'personnel-exact')[0]
         Rebuild-Inputs
         $typeControl = $script:FieldControls['numberType'].Input
         $dispatcherControl = $script:FieldControls['dispatcherAccount'].Input
         $dispatcherStatus = $script:FieldControls['dispatcherAccount'].SearchStatus
+        if (-not $dispatcherControl.Enabled) { throw '新增指定通讯录人员时关联调度账号被错误禁用。' }
         if ($dispatcherControl.DropDownStyle -ne [Windows.Forms.ComboBoxStyle]::DropDown -or $dispatcherControl.DisplayMember -ne 'Label' -or $dispatcherControl.ValueMember -ne 'Value') { throw '调度账号搜索单选下拉渲染不正确。' }
         if ($dispatcherStatus -isnot [Windows.Forms.Label] -or $dispatcherControl.Tag -ne $dispatcherStatus) { throw '调度账号搜索状态标签未正确绑定。' }
         if ($script:FieldControls['dispatcherAccount'].Label.Bounds.IntersectsWith($dispatcherStatus.Bounds)) { throw '调度账号搜索状态与字段标题发生重叠。' }
@@ -2673,7 +2715,7 @@ if ($UiSelfTest) {
         if ($resultTabs.Left -ne 24 -or $resultTabs.Right -ne ($configSurface.ClientSize.Width - 24)) { throw '运行信息区域未与配置页容器宽度保持一致。' }
         if ($null -eq $form.Icon -or -not $form.ShowIcon -or -not (Test-Path -LiteralPath $launcherIconPath -PathType Leaf)) { throw '主窗口未加载桌面快捷方式使用的 PUC Toolkit 图标。' }
         if ([PucTaskbarIdentity]::GetProcessIdentity() -ne $script:PucAppUserModelId -or [PucTaskbarIdentity]::GetWindowProperty($form.Handle,5) -ne $script:PucAppUserModelId -or [PucTaskbarIdentity]::GetWindowProperty($form.Handle,3) -ne $taskbarIconResource) { throw '任务栏未绑定 PUC Toolkit 的独立应用标识和图标资源。' }
-        [pscustomobject]@{status='ui-self-test-passed';tabs=$resultTabs.TabPages.Count;summaryFields=$resultFields.Items.Count;detailRows=$resultGrid.Rows.Count;resultHeight=$resultTabs.Height;environmentVersionControl='passed';versionCompatibilityWarning='passed';summaryFullHeight='passed';resultContainerWidth='passed';windowIcon='passed';taskbarIdentity='passed';inputPanelRedraw='passed';responsiveInputColumns='passed';latestStageRows='passed';compactNumericColumns='passed';accountColumnWidth='passed';inlineConfirmation='passed';uploadVisibility='passed';actionBarLayout='passed';createPrefixDefault='empty';createCountDefault=1;personnelTypeDropdown='passed';personnelFieldBounds='passed';dispatcherSearchDropdown='passed';dispatcherSearchEvent='passed';dispatcherSearchStatus='passed';updateAccountSearchDropdown='passed';updateAccountSearchSelection='passed';resetAccountSearchDropdown='passed';resetAccountSearchSelection='passed';executionNodeColors='passed';redundantGroupColumn='hidden'} | ConvertTo-Json -Compress
+        [pscustomobject]@{status='ui-self-test-passed';tabs=$resultTabs.TabPages.Count;summaryFields=$resultFields.Items.Count;detailRows=$resultGrid.Rows.Count;resultHeight=$resultTabs.Height;environmentVersionControl='passed';versionCompatibilityWarning='passed';summaryFullHeight='passed';resultContainerWidth='passed';windowIcon='passed';taskbarIdentity='passed';inputPanelRedraw='passed';responsiveInputColumns='passed';latestStageRows='passed';compactNumericColumns='passed';accountColumnWidth='passed';inlineConfirmation='passed';uploadVisibility='passed';actionBarLayout='passed';createPrefixDefault='empty';createCountDefault=1;personnelTypeDropdown='passed';personnelFieldBounds='passed';batchDispatcherBindingGuard='passed';dispatcherSearchDropdown='passed';dispatcherSearchEvent='passed';dispatcherSearchStatus='passed';updateAccountSearchDropdown='passed';updateAccountSearchSelection='passed';resetAccountSearchDropdown='passed';resetAccountSearchSelection='passed';executionNodeColors='passed';redundantGroupColumn='hidden'} | ConvertTo-Json -Compress
     } finally {
         if ($null -ne $script:AppBusinessController) { try { [void]$script:AppBusinessController.Dispose.Invoke() } catch {} }
         $timer.Stop();$timer.Dispose();$form.Dispose()

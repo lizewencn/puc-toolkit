@@ -21,6 +21,7 @@ if (@($PlanOnly,$DryRun,$Live | Where-Object { $_ }).Count -ne 1) { throw 'Selec
 if ($Live -and -not $ConfirmLive) { throw 'Live creation requires ConfirmLive after explicit user approval.' }
 if ([string]::IsNullOrWhiteSpace($ExactAlias) -and [string]::IsNullOrWhiteSpace($AliasPrefix)) { throw 'Provide AliasPrefix or ExactAlias.' }
 if (-not [string]::IsNullOrWhiteSpace($ExactAlias) -and $Count -ne 1) { throw 'ExactAlias supports exactly one personnel record.' }
+if (-not [string]::IsNullOrWhiteSpace($AliasPrefix) -and $Count -gt 1 -and -not [string]::IsNullOrWhiteSpace($DispatcherAccount)) { throw 'Batch personnel creation cannot bind one dispatcher account to multiple personnel records.' }
 Import-Module (Join-Path $PSScriptRoot 'PucConfig.psm1') -Force
 $root = Get-PucConfigRoot $ConfigRoot
 $environmentConfig = Get-PucEnvironment -ConfigRoot $root -Name $Environment

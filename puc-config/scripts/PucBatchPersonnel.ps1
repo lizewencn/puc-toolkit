@@ -19,6 +19,7 @@ if ([int]$config.count -lt 1 -or [int]$config.count -gt 1000) { throw 'count mus
 if ([int]$config.numberType -notin @(102,103,104)) { throw 'numberType must be 102 (person), 103 (vehicle), or 104 (emergency vehicle).' }
 if ([string]::IsNullOrWhiteSpace([string]$config.exactAlias) -and [string]::IsNullOrWhiteSpace([string]$config.aliasPrefix)) { throw 'Provide exactAlias or aliasPrefix.' }
 if (-not [string]::IsNullOrWhiteSpace([string]$config.exactAlias) -and [int]$config.count -ne 1) { throw 'exactAlias supports exactly one personnel record.' }
+if (-not [string]::IsNullOrWhiteSpace([string]$config.aliasPrefix) -and [int]$config.count -gt 1 -and -not [string]::IsNullOrWhiteSpace([string]$config.dispatcherAccount)) { throw 'Batch personnel creation cannot bind one dispatcher account to multiple personnel records.' }
 
 $script:lastPersonnelTimestamp = 0L
 function New-PersonTimestamp {
